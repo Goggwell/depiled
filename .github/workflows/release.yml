@@ -1,0 +1,52 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            bundles: nsis
+          - os: windows-latest
+            target: i686-pc-windows-msvc
+            bundles: nsis
+          - os: macos-latest
+            target: aarch64-apple-darwin
+            bundles: dmg
+          - os: macos-latest
+            target: x86_64-apple-darwin
+            bundles: dmg
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - run: npm ci
+        working-directory: ui
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: ui
+          tagName: ${{ github.ref_name }}
+          releaseName: Depiled ${{ github.ref_name }}
+          releaseDraft: true
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
