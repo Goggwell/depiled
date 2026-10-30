@@ -1,0 +1,6 @@
+/target
+/backups
+/ui-themes
+node_modules
+dist
+.DS_Store
