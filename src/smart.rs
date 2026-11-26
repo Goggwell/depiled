@@ -12,7 +12,7 @@ use crate::rules::Rule;
 
 const IDLE_DAYS: u32 = 7;
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct SmartRule {
     /// "never", "played" or "idle" (started but not played for a week).
     #[serde(default)]
@@ -26,11 +26,19 @@ pub struct SmartRule {
     pub flags: Vec<u32>,
     #[serde(default)]
     pub tags: Vec<u32>,
+    /// Further conditions with AND, OR and NOT, as built in the app.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<crate::cond::Cond>,
 }
 
 impl SmartRule {
     pub fn is_empty(&self) -> bool {
-        self.played.is_none() && self.achievements.is_none() && self.min_review == 0 && self.flags.is_empty() && self.tags.is_empty()
+        self.played.is_none()
+            && self.achievements.is_none()
+            && self.min_review == 0
+            && self.flags.is_empty()
+            && self.tags.is_empty()
+            && self.condition.as_ref().is_none_or(crate::cond::Cond::is_empty)
     }
 
     pub fn to_rule(&self, collection: &str) -> Result<Rule> {
@@ -54,6 +62,8 @@ impl SmartRule {
         rule.min_review_percent = (self.min_review > 0).then_some(self.min_review);
         rule.has_flags = self.flags.iter().map(ToString::to_string).collect();
         rule.has_tags = self.tags.iter().map(ToString::to_string).collect();
+        rule.condition.clone_from(&self.condition);
+        rule.validate()?;
         Ok(rule)
     }
 }
@@ -108,6 +118,7 @@ mod tests {
             min_review: 80,
             flags: vec![2, 23],
             tags: vec![1667],
+            condition: None,
         };
         let rule = smart.to_rule("Scary").unwrap();
         assert_eq!(rule.played, Some(true));

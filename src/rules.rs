@@ -44,6 +44,9 @@ pub struct Rule {
     /// a rule away from games you've deliberately filed elsewhere.
     #[serde(default)]
     pub not_in_collections: Vec<String>,
+    /// Any further conditions, with AND, OR and NOT. See cond.
+    #[serde(default)]
+    pub condition: Option<crate::cond::Cond>,
 }
 
 /// Replaces tag names with ids using Steam's own tag list. Fails on names Steam doesn't know,
@@ -92,10 +95,22 @@ impl Rule {
                 bail!("rule '{}': unknown flag '{flag}'", self.collection);
             }
         }
+        if let Some(field) = self.condition.as_ref().and_then(|c| c.unknown_fields().into_iter().next()) {
+            bail!("rule '{}': there's no filter called '{field}'", self.collection);
+        }
         Ok(())
     }
 
     pub fn matches(&self, g: &Game, now: u64) -> bool {
+        self.matches_in(g, now, &[])
+    }
+
+    /// Like matches, knowing which collections (by id) the game is in, for conditions that
+    /// ask about collections.
+    pub fn matches_in(&self, g: &Game, now: u64, collections: &[String]) -> bool {
+        if let Some(c) = &self.condition && !c.matches(g, &crate::cond::Context { now, collections }) {
+            return false;
+        }
         let played = g.started();
         let idle_days = (g.last_played > 0).then(|| now.saturating_sub(g.last_played) / 86_400);
         let hours = f64::from(g.playtime_minutes) / 60.0;
@@ -147,10 +162,17 @@ pub fn plan(rules: &[Rule], games: &[Game], current: &[Collection], now: u64) ->
     let member_sets: BTreeMap<&str, BTreeSet<u32>> =
         by_name.iter().map(|(n, c)| (n.as_str(), c.apps.iter().copied().collect())).collect();
     let members = |name: &str| -> BTreeSet<u32> { member_sets.get(name.to_lowercase().as_str()).cloned().unwrap_or_default() };
+    // Which collections (by id) each game is in, for conditions that ask.
+    let mut filed_in: BTreeMap<u32, Vec<String>> = BTreeMap::new();
+    for c in current.iter().filter(|c| !c.dynamic) {
+        for a in &c.apps {
+            filed_in.entry(*a).or_default().push(c.id.clone());
+        }
+    }
     // A rule is skipped for games the user keeps in one of its excluded collections.
     let applies = |r: &Rule, g: &Game| {
         !r.not_in_collections.iter().any(|n| member_sets.get(n.to_lowercase().as_str()).is_some_and(|s| s.contains(&g.appid)))
-            && r.matches(g, now)
+            && r.matches_in(g, now, filed_in.get(&g.appid).map_or(&[], Vec::as_slice))
     };
 
     let mut wants: BTreeMap<String, Want> = BTreeMap::new();
@@ -202,7 +224,7 @@ pub fn plan(rules: &[Rule], games: &[Game], current: &[Collection], now: u64) ->
         match by_name.get(&want.name.to_lowercase()) {
             None => {
                 if !want.add.is_empty() {
-                    ops.push(Op::Create { name: want.name.clone(), apps: want.add.iter().copied().collect() });
+                    ops.push(Op::Create { id: crate::catalog::new_id(), name: want.name.clone(), apps: want.add.iter().copied().collect() });
                 }
             }
             Some(c) => {
@@ -310,7 +332,7 @@ mod tests {
     #[test]
     fn missing_collections_are_created_only_when_needed() {
         let ops = plan(&status_rules(7), &[game(1, 60, Some(1))], &[], NOW);
-        assert_eq!(ops, vec![Op::Create { name: "Started".into(), apps: vec![1] }]);
+        assert!(matches!(&ops[..], [Op::Create { name, apps, .. }] if name == "Started" && apps == &vec![1]));
         assert!(plan(&status_rules(7), &[game(1, 0, None)], &[], NOW).is_empty());
     }
 
@@ -378,8 +400,8 @@ mod tests {
         let games = [game(1, 0, None), game(2, 60, Some(30))];
         let ops = plan(&with_planned(7), &games, &current, NOW);
         assert!(ops.contains(&Op::Add { id: "uc-4".into(), name: "PLANNED".into(), apps: vec![1] }));
-        assert!(ops.iter().any(|o| matches!(o, Op::Create { name, apps } if name == "Unfinished" && apps == &vec![2])));
-        assert!(!ops.iter().any(|o| matches!(o, Op::Create { name, apps } if name == "Unfinished" && apps.contains(&1))));
+        assert!(ops.iter().any(|o| matches!(o, Op::Create { name, apps, .. } if name == "Unfinished" && apps == &vec![2])));
+        assert!(!ops.iter().any(|o| matches!(o, Op::Create { name, apps, .. } if name == "Unfinished" && apps.contains(&1))));
     }
 
     #[test]
@@ -387,7 +409,7 @@ mod tests {
         let brief = game(1, 0, Some(30));
         assert!(brief.started());
         let ops = plan(&with_planned(7), &[brief], &[], NOW);
-        assert_eq!(ops, vec![Op::Create { name: "Unfinished".into(), apps: vec![1] }]);
+        assert!(matches!(&ops[..], [Op::Create { name, apps, .. }] if name == "Unfinished" && apps == &vec![1]));
     }
 
     #[test]
