@@ -101,10 +101,13 @@ pub fn path() -> Result<PathBuf> {
     Ok(dir()?.join("config.toml"))
 }
 
+/// Loads the config, writing the default one first if this is a fresh install.
 pub fn load() -> Result<(Config, String)> {
     let path = path()?;
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("no config at {}; run `depiled config init`", path.display()))?;
+    if !path.exists() {
+        init()?;
+    }
+    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
     Ok((Config::parse(&text)?, text))
 }
 

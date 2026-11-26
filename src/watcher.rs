@@ -1,24 +1,25 @@
-//! Keeps an eye on Steam while the app is open. When a game is launched or closed, or its
-//! playtime changes, the rules are re-checked after things settle. What happens next depends
-//! on the user's automation setting: nothing, a notification, or applying the changes.
+//! Keeps an eye on Steam while the app is open, by looking at its files: playtime changes
+//! when a game is played, and the collection file changes when Steam saves. After things
+//! settle the rules are re-checked, and what happens next depends on the automation setting:
+//! nothing, a notification, or putting the changes in and saving them once Steam is closed.
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use serde::Serialize;
 
-use crate::live::Live;
-use crate::service::{self, OpView};
+use crate::service::{self, OpView, Session};
 use crate::settings::{self, Automation};
-use crate::steam::SteamInstall;
+use crate::steam::{self, SteamInstall};
 
-/// How often Steam is looked at. Each look is a cheap read of the games list.
-pub const TICK: Duration = Duration::from_secs(10);
-/// How long things must stay quiet after a change before the rules are re-checked, so a game
-/// that is still saving its playtime isn't evaluated half-way.
+/// How often Steam is looked at. Each look only reads file times.
+pub const TICK: Duration = Duration::from_secs(5);
+/// How long things must stay quiet after a change before acting, so a game that is still
+/// saving its playtime isn't evaluated half-way.
 pub const SETTLE: Duration = Duration::from_secs(8);
 /// Re-check at least this often, which catches time-based rules like "idle for a week".
 pub const FULL_CHECK: Duration = Duration::from_secs(600);
@@ -26,12 +27,13 @@ pub const FULL_CHECK: Duration = Duration::from_secs(600);
 #[derive(Debug, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Event {
-    /// Changes are waiting, and the user chose to be asked.
+    /// Steam's files or running state changed; the library was re-read.
+    Changed { steam_running: bool },
+    /// The rules have changes to suggest, and the user chose to be asked.
     Pending { ops: Vec<OpView>, notes: Vec<String> },
-    /// Changes were applied automatically.
-    Organized { applied: usize, snapshot: Option<String>, verified: bool },
+    /// The rules' changes were put in the draft, and saved if Steam was closed.
+    Organized { applied: usize, saved: bool, snapshot: Option<String> },
 }
-
 /// Decides when a re-check is due. Pure, so the timing rules are easy to test.
 pub struct Tracker {
     running: u32,
@@ -79,61 +81,91 @@ fn signature<T: std::fmt::Debug>(ops: &T) -> u64 {
     h.finish()
 }
 
+/// Changes whenever a game is played, Steam saves its collections, or Steam writes
+/// achievement progress (after a play session, or when a game's library page is opened).
+fn fingerprint(install: &SteamInstall) -> u64 {
+    let mut h = DefaultHasher::new();
+    for file in [install.config_dir().join("localconfig.vdf"), install.cloudstorage_dir().join("cloud-storage-namespace-1.json")] {
+        std::fs::metadata(&file).and_then(|m| m.modified()).ok().hash(&mut h);
+    }
+    for dir in [install.config_dir().join("librarycache"), install.dir.join("appcache").join("stats")] {
+        let newest = std::fs::read_dir(&dir)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
+            .filter_map(|e| e.metadata().and_then(|m| m.modified()).ok())
+            .max();
+        newest.hash(&mut h);
+    }
+    h.finish()
+}
+
 struct State {
     tracker: Tracker,
-    /// The set of changes the user was last told about, so the same ones aren't announced twice.
+    steam_running: Option<bool>,
+    /// The changes the user was last told about, so the same ones aren't announced twice.
     announced: Option<u64>,
 }
 
-fn tick(port: u16, mode: Automation, state: &mut State) -> Result<Option<Event>> {
-    let live = Live::connect(port)?;
-    let running = SteamInstall::detect().and_then(|i| i.running_app_id()).unwrap_or(0);
-    if !state.tracker.observe(Instant::now(), running, live.fingerprint()?) {
-        return Ok(None);
+fn tick(session: &Mutex<Option<Session>>, mode: Automation, state: &mut State, emit: &mut dyn FnMut(Event)) -> Result<()> {
+    let install = SteamInstall::detect()?;
+    let running = steam::steam_is_running().unwrap_or(false);
+    let game = install.running_app_id().unwrap_or(0);
+    let just_closed = state.steam_running == Some(true) && !running;
+    let state_changed = state.steam_running != Some(running);
+    state.steam_running = Some(running);
+    let due = state.tracker.observe(Instant::now(), game, fingerprint(&install));
+    if !due && !state_changed {
+        return Ok(());
     }
 
-    let plan = service::build_plan(port)?;
-    if plan.ops.is_empty() {
-        state.announced = None;
-        return Ok(None);
+    let mut guard = session.lock().map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+    let Some(s) = guard.as_mut() else { return Ok(()) };
+    if due {
+        s.reload()?;
     }
+    emit(Event::Changed { steam_running: running });
+
     match mode {
-        Automation::Off => Ok(None),
-        Automation::Notify => {
-            let sig = signature(&plan.ops);
-            if state.announced == Some(sig) {
-                return Ok(None);
+        Automation::Off => {}
+        Automation::Notify if due => {
+            let (ops, notes) = s.plan_rules()?;
+            if ops.is_empty() {
+                state.announced = None;
+            } else if state.announced != Some(signature(&ops)) {
+                state.announced = Some(signature(&ops));
+                emit(Event::Pending { ops: service::describe(&ops, &s.games), notes });
             }
-            state.announced = Some(sig);
-            Ok(Some(Event::Pending { ops: service::describe(&plan.ops, &plan.games), notes: plan.notes }))
         }
+        Automation::Notify => {}
         Automation::Auto => {
-            let report = service::apply_plan(plan)?;
-            state.announced = None;
-            Ok(Some(Event::Organized { applied: report.applied, snapshot: report.snapshot, verified: report.verified }))
+            let applied = if due { s.apply_rules()? } else { 0 };
+            // Save when there is something to save and Steam is out of the way: right away,
+            // or as soon as the user closes it.
+            if !running && (applied > 0 || just_closed) && s.draft_state().pending > 0 {
+                let report = s.save()?;
+                emit(Event::Organized { applied: report.changes, saved: true, snapshot: report.snapshot });
+            } else if applied > 0 {
+                emit(Event::Organized { applied, saved: false, snapshot: None });
+            }
         }
     }
+    Ok(())
 }
 
 /// Runs until `stop` is set. The setting is re-read every tick, so changes take effect at once.
-/// Problems such as Steam not running are expected and simply retried on the next tick.
-pub fn run(port: u16, stop: &AtomicBool, emit: &mut dyn FnMut(Event)) {
-    let mut state = State { tracker: Tracker::new(), announced: None };
+/// Problems such as a file being rewritten mid-read are expected and retried on the next tick.
+pub fn run(session: &Mutex<Option<Session>>, stop: &AtomicBool, emit: &mut dyn FnMut(Event)) {
+    let mut state = State { tracker: Tracker::new(), steam_running: None, announced: None };
     while !stop.load(Ordering::Relaxed) {
         let mode = settings::load().ok().and_then(|s| s.automation).unwrap_or(Automation::Off);
-        if mode == Automation::Off {
-            state = State { tracker: Tracker::new(), announced: None };
-        } else if let Ok(Some(event)) = tick(port, mode, &mut state) {
-            emit(event);
-        }
-
+        let _ = tick(session, mode, &mut state, emit);
         let wake = Instant::now() + TICK;
         while Instant::now() < wake && !stop.load(Ordering::Relaxed) {
             std::thread::sleep(Duration::from_millis(200));
         }
     }
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -1,9 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use anyhow::{Context, Result, bail};
-use serde::Deserialize;
-
-use crate::model::Collection;
+use anyhow::{Context, Result};
 
 const STEAM64_BASE: u64 = 76_561_197_960_265_728;
 
@@ -110,55 +107,47 @@ pub fn steam_is_running() -> Result<bool> {
     sys.refresh_processes(ProcessesToUpdate::All, true);
     Ok(sys.processes_by_exact_name(name.as_ref()).next().is_some())
 }
-#[derive(Deserialize)]
-struct CloudEntry {
-    key: String,
-    value: Option<String>,
-    #[serde(default)]
-    is_deleted: bool,
-}
-
-#[derive(Deserialize)]
-struct RawCollection {
-    id: String,
-    name: String,
-    #[serde(default)]
-    added: Vec<u32>,
-    #[serde(default, rename = "filterSpec")]
-    filter_spec: Option<serde_json::Value>,
-}
-
-/// Read-only parse of the on-disk collections. Never used for writing: Steam owns the merge
-/// and version bookkeeping, so edits go through the running client instead.
-pub fn read_collections_from_disk(cloudstorage: &Path) -> Result<Vec<Collection>> {
-    let path = cloudstorage.join("cloud-storage-namespace-1.json");
-    let text = std::fs::read_to_string(&path).with_context(|| format!("reading {}", path.display()))?;
-    let entries: Vec<(String, CloudEntry)> = serde_json::from_str(&text)?;
-
-    let mut out = Vec::new();
-    for (key, entry) in entries {
-        if !key.starts_with("user-collections.") || entry.is_deleted {
-            continue;
+/// The two-letter country this computer is set to, used as the default store region.
+pub fn home_region() -> Option<String> {
+    #[cfg(windows)]
+    {
+        use winreg::RegKey;
+        use winreg::enums::HKEY_CURRENT_USER;
+        let name: Option<String> = RegKey::predef(HKEY_CURRENT_USER)
+            .open_subkey(r"Control Panel\International\Geo")
+            .ok()
+            .and_then(|k| k.get_value("Name").ok());
+        if let Some(n) = name.filter(|n| n.len() == 2) {
+            return Some(n.to_ascii_uppercase());
         }
-        let Some(value) = entry.value else { continue };
-        let raw: RawCollection = serde_json::from_str(&value)
-            .with_context(|| format!("collection entry {}", entry.key))?;
-        if !Collection::is_user_collection_id(&raw.id) {
-            continue;
-        }
-        out.push(Collection {
-            id: raw.id,
-            name: raw.name,
-            apps: raw.added,
-            dynamic: raw.filter_spec.is_some(),
-        });
     }
-    Ok(out)
+    // macOS and Linux: the region part of the locale, e.g. en_GB.UTF-8.
+    ["LC_ALL", "LC_MONETARY", "LANG"].iter().filter_map(|v| std::env::var(v).ok()).find_map(|l| {
+        let lang = l.split(['.', '@']).next()?;
+        lang.split('_').nth(1).filter(|r| r.len() == 2).map(str::to_ascii_uppercase)
+    })
 }
 
-pub fn require_closed() -> Result<()> {
-    if steam_is_running()? {
-        bail!("Steam is running; close it first");
+/// Asks a running Steam to exit, the same way its own menu does.
+pub fn shutdown() -> Result<()> {
+    let install = SteamInstall::detect()?;
+    if cfg!(windows) {
+        std::process::Command::new(install.dir.join("steam.exe")).arg("-shutdown").spawn()?;
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("osascript").args(["-e", "quit app \"Steam\""]).spawn()?;
+    } else {
+        std::process::Command::new("steam").arg("-shutdown").spawn()?;
+    }
+    Ok(())
+}
+
+pub fn start(install: &SteamInstall) -> Result<()> {
+    if cfg!(windows) {
+        std::process::Command::new(install.dir.join("steam.exe")).spawn()?;
+    } else if cfg!(target_os = "macos") {
+        std::process::Command::new("open").args(["-a", "Steam"]).spawn()?;
+    } else {
+        std::process::Command::new("steam").spawn()?;
     }
     Ok(())
 }

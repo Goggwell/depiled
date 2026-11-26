@@ -2,10 +2,10 @@ use std::collections::BTreeSet;
 
 use crate::model::Collection;
 
-/// One change to apply to the live client.
+/// One change to Steam's collections.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Op {
-    Create { name: String, apps: Vec<u32> },
+    Create { id: String, name: String, apps: Vec<u32> },
     Add { id: String, name: String, apps: Vec<u32> },
     Remove { id: String, name: String, apps: Vec<u32> },
     Rename { id: String, from: String, to: String },
@@ -15,13 +15,46 @@ pub enum Op {
 impl std::fmt::Display for Op {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Op::Create { name, apps } => write!(f, "create '{name}' with {} games", apps.len()),
+            Op::Create { name, apps, .. } => write!(f, "create '{name}' with {} games", apps.len()),
             Op::Add { name, apps, .. } => write!(f, "add {} games to '{name}'", apps.len()),
             Op::Remove { name, apps, .. } => write!(f, "remove {} games from '{name}'", apps.len()),
             Op::Rename { from, to, .. } => write!(f, "rename '{from}' to '{to}'"),
             Op::Delete { name, .. } => write!(f, "delete '{name}'"),
         }
     }
+}
+
+/// Applies one change to an in-memory list of collections. Changes that no longer fit (the
+/// collection was deleted elsewhere in the meantime) are skipped and reported as `false`.
+pub fn apply(cols: &mut Vec<Collection>, op: &Op) -> bool {
+    let find = |cols: &mut Vec<Collection>, id: &str| cols.iter().position(|c| c.id == id);
+    match op {
+        Op::Create { id, name, apps } => {
+            if find(cols, id).is_some() {
+                return false;
+            }
+            cols.push(Collection { id: id.clone(), name: name.clone(), apps: apps.clone(), dynamic: false });
+        }
+        Op::Add { id, apps, .. } => {
+            let Some(i) = find(cols, id) else { return false };
+            let have: BTreeSet<u32> = cols[i].apps.iter().copied().collect();
+            cols[i].apps.extend(apps.iter().filter(|a| !have.contains(a)));
+        }
+        Op::Remove { id, apps, .. } => {
+            let Some(i) = find(cols, id) else { return false };
+            let gone: BTreeSet<u32> = apps.iter().copied().collect();
+            cols[i].apps.retain(|a| !gone.contains(a));
+        }
+        Op::Rename { id, to, .. } => {
+            let Some(i) = find(cols, id) else { return false };
+            cols[i].name.clone_from(to);
+        }
+        Op::Delete { id, .. } => {
+            let Some(i) = find(cols, id) else { return false };
+            cols.remove(i);
+        }
+    }
+    true
 }
 
 /// Changes that turn `current` back into `target`.
@@ -39,7 +72,7 @@ pub fn plan_restore(current: &[Collection], target: &[Collection]) -> Vec<Op> {
             .find(|c| c.id == want.id)
             .or_else(|| current.iter().find(|c| c.name == want.name));
         let Some(have) = found else {
-            ops.push(Op::Create { name: want.name.clone(), apps: want.apps.clone() });
+            ops.push(Op::Create { id: want.id.clone(), name: want.name.clone(), apps: want.apps.clone() });
             continue;
         };
         if have.name != want.name {
@@ -120,7 +153,7 @@ mod tests {
             ops,
             vec![
                 Op::Rename { id: "uc-1".into(), from: "Renamed".into(), to: "Original".into() },
-                Op::Create { name: "Gone".into(), apps: vec![5, 6] },
+                Op::Create { id: "uc-9".into(), name: "Gone".into(), apps: vec![5, 6] },
             ]
         );
     }
