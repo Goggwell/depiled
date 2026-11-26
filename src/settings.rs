@@ -18,11 +18,48 @@ pub enum Automation {
     Auto,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Settings {
     /// `None` until the user has chosen, so the app can ask once.
     #[serde(default)]
     pub automation: Option<Automation>,
+    /// Online extras on or off (completion times, achievement progress, prices and
+    /// ProtonDB). `None` until the user has chosen.
+    #[serde(default)]
+    pub online_stats: Option<bool>,
+    /// Two-letter country for store prices; `None` follows this computer's region.
+    #[serde(default)]
+    pub region: Option<String>,
+    #[serde(default = "yes")]
+    pub online_achievements: bool,
+    #[serde(default = "yes")]
+    pub online_prices: bool,
+    #[serde(default = "yes")]
+    pub online_protondb: bool,
+    #[serde(default = "yes")]
+    pub online_hunters: bool,
+    /// Start Steam again after closing it to save.
+    #[serde(default = "yes")]
+    pub reopen_steam: bool,
+}
+
+fn yes() -> bool {
+    true
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            automation: None,
+            online_stats: None,
+            region: None,
+            online_achievements: true,
+            online_prices: true,
+            online_protondb: true,
+            online_hunters: true,
+            reopen_steam: true,
+        }
+    }
 }
 
 fn path() -> Result<PathBuf> {
@@ -69,7 +106,7 @@ mod tests {
     fn choice_roundtrips_and_serializes_in_plain_words() {
         let dir = std::env::temp_dir().join(format!("sc-settings-{}", crate::snapshot::now_secs()));
         let file = dir.join("settings.json");
-        let s = Settings { automation: Some(Automation::Notify) };
+        let s = Settings { automation: Some(Automation::Notify), ..Settings::default() };
         save_to(&file, &s).unwrap();
         assert!(std::fs::read_to_string(&file).unwrap().contains("\"notify\""));
         assert_eq!(load_from(&file).unwrap(), s);
