@@ -1,22 +1,23 @@
 <script lang="ts">
-  import { app } from './store.svelte';
+  import { tick } from 'svelte';
+  import type { Collection } from './api';
+  import { app, COLORS, NO_COLOR, OTHER_KINDS } from './store.svelte';
   import Icon from './Icon.svelte';
 
   let dropTarget = $state<string | null>(null);
   let renaming = $state<string | null>(null);
   let renameValue = $state('');
   let confirmDelete = $state<string | null>(null);
+  /** Collection whose menu is open, and where. */
+  let menu = $state<{ id: string; x: number; y: number } | null>(null);
 
-  const total = $derived(app.library?.games.length ?? 0);
-
-  function accepts(e: DragEvent) {
-    return e.dataTransfer?.types.includes('application/x-games') ?? false;
-  }
+  const total = $derived(app.gameCount);
+  const menuFor = $derived(menu ? app.collections.find((c) => c.id === menu!.id) : undefined);
 
   function over(e: DragEvent, id: string) {
-    if (!accepts(e)) return;
+    if (!e.dataTransfer?.types.includes('application/x-games')) return;
     e.preventDefault();
-    e.dataTransfer!.dropEffect = e.shiftKey ? 'move' : 'copy';
+    e.dataTransfer.dropEffect = e.shiftKey ? 'move' : 'copy';
     dropTarget = id;
   }
 
@@ -32,58 +33,103 @@
     const id = renaming;
     const name = renameValue.trim();
     renaming = null;
-    if (id && name) await app.renameCollection(id, name);
+    if (id && name && name !== app.collections.find((c) => c.id === id)?.name) await app.renameCollection(id, name);
   }
 
-  function startRename(id: string, name: string) {
-    renaming = id;
-    renameValue = name;
-  }
-
-  async function remove(id: string) {
+  function openMenu(e: MouseEvent, c: Collection) {
+    if (c.dynamic) return;
+    e.preventDefault();
+    opener = e.currentTarget as HTMLElement;
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    menu = { id: c.id, x: e.type === 'contextmenu' ? e.clientX : rect.right - 8, y: e.type === 'contextmenu' ? e.clientY : rect.bottom + 4 };
     confirmDelete = null;
-    await app.deleteCollection(id);
   }
 
-  const focus = (node: HTMLElement) => node.focus();
+  /** Runs a menu action, then closes the menu. The action runs first: it needs the collection,
+   *  which is looked up from the open menu. */
+  function act(f: () => void) {
+    f();
+    closeMenu();
+  }
 
-  const base = 'group relative flex h-9 w-full items-center gap-2 rounded-field px-2.5 text-left text-sm transition-colors';
+  // The menu takes focus when it opens, arrow keys move through it, and Esc gives focus back
+  // to the button that opened it.
+  let menuEl = $state<HTMLDivElement>();
+  let opener: HTMLElement | null = null;
+  $effect(() => {
+    if (menu && menuEl) menuEl.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
+  });
+  function closeMenu() {
+    menu = null;
+    opener?.focus();
+    opener = null;
+  }
+  function menuKeys(e: KeyboardEvent) {
+    const items = [...(menuEl?.querySelectorAll<HTMLElement>('[role="menuitem"]') ?? [])];
+    const at = items.indexOf(document.activeElement as HTMLElement);
+    const go = (i: number) => items[(i + items.length) % items.length]?.focus();
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight') go(at + 1);
+    else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') go(at - 1);
+    else if (e.key === 'Home') go(0);
+    else if (e.key === 'End') go(items.length - 1);
+    else if (e.key === 'Escape' || e.key === 'Tab') closeMenu();
+    else return;
+    e.preventDefault();
+    e.stopPropagation();
+  }
+
+  const focus = (node: HTMLInputElement) => {
+    node.focus();
+    node.select();
+  };
+
+  const row = 'group relative flex h-8 w-full items-center gap-2.5 rounded-field pl-2 pr-1.5 text-left transition-colors';
+  const active = (on: boolean) => (on ? 'bg-base-200 font-semibold' : 'hover:bg-base-200/70');
 </script>
 
-<aside class="flex w-64 shrink-0 flex-col gap-3 border-r border-base-300 bg-base-100 p-3">
-  <div class="flex items-center gap-3 px-1.5 pb-1 pt-2">
-    <div class="grid size-10 place-items-center rounded-box bg-primary text-primary-content"><Icon name="library" size={22} /></div>
-    <div class="min-w-0">
-      <div class="font-display text-lg font-semibold leading-tight">Collections</div>
-      <div class="text-xs text-muted">{total} games</div>
-    </div>
+<svelte:window onclick={() => (menu = null)} onkeydown={(e) => e.key === 'Escape' && menu && closeMenu()} />
+
+<aside class="flex w-60 shrink-0 flex-col border-r border-base-300 bg-base-100" aria-label="Library and collections">
+  <div class="px-4 pb-3 pt-4">
+    <span class="font-display text-[22px] font-extrabold leading-none tracking-[-0.03em]">Depiled</span>
   </div>
 
-  <nav class="flex min-h-0 flex-1 flex-col gap-0.5 overflow-y-auto pr-0.5">
-    <button class="{base} {app.view === 'all' ? 'bg-base-300 font-semibold' : 'hover:bg-base-200'}" onclick={() => (app.view = 'all')}>
-      <Icon name="library" size={17} /> <span class="flex-1 truncate">All games</span>
-      <span class="text-xs text-muted">{total}</span>
+  <nav class="flex min-h-0 flex-1 flex-col gap-px overflow-y-auto px-2 pb-2">
+    <button class="{row} {active(app.view === 'all')}" onclick={() => (app.view = 'all')}>
+      <Icon name="library" size={16} /> <span class="flex-1 truncate">All games</span>
+      <span class="text-xs tabular-nums text-muted">{total.toLocaleString()}</span>
     </button>
-    <button class="{base} {app.view === 'none' ? 'bg-base-300 font-semibold' : 'hover:bg-base-200'}" onclick={() => (app.view = 'none')}>
-      <Icon name="inbox" size={17} /> <span class="flex-1 truncate">Not in a collection</span>
-      <span class="text-xs text-muted">{app.uncategorizedCount}</span>
+    <button class="{row} {active(app.view === 'none')}" onclick={() => (app.view = 'none')}>
+      <Icon name="inbox" size={16} /> <span class="flex-1 truncate">Not in a collection</span>
+      <span class="text-xs tabular-nums text-muted">{app.uncategorizedCount.toLocaleString()}</span>
     </button>
+    {#each OTHER_KINDS.filter((k) => app.kindCounts[k.kind]) as k (k.kind)}
+      <button class="{row} {active(app.view === `kind:${k.kind}`)} text-muted" onclick={() => (app.view = `kind:${k.kind}`)}>
+        <span class="w-4"></span> <span class="flex-1 truncate">{k.label}</span>
+        <span class="text-xs tabular-nums">{app.kindCounts[k.kind]?.toLocaleString()}</span>
+      </button>
+    {/each}
 
-    <div class="mb-1 mt-4 px-2.5 text-xs font-bold uppercase tracking-wider text-muted">Your collections</div>
+    <div class="mt-4 flex items-center justify-between pb-1 pl-2 pr-1">
+      <span class="text-xs font-semibold text-muted">Collections</span>
+      <button class="btn btn-ghost btn-xs btn-square" aria-label="New collection" title="New collection" onclick={() => app.openNewCollection()}><Icon name="plus" size={14} /></button>
+    </div>
 
     {#each app.collections as c (c.id)}
       <div
-        class="{base} {app.view === c.id ? 'bg-base-300 font-semibold' : 'hover:bg-base-200'} {dropTarget === c.id ? 'outline-2 -outline-offset-2 outline-dashed outline-secondary bg-base-300' : ''} {c.dynamic ? 'opacity-70' : ''}"
+        class="{row} {active(app.view === c.id)} {dropTarget === c.id ? 'bg-base-200 ring-2 ring-inset' : ''}"
+        style={dropTarget === c.id ? `--tw-ring-color:${c.color ?? 'var(--color-base-content)'}` : ''}
         role="listitem"
         ondragover={(e) => !c.dynamic && over(e, c.id)}
         ondragleave={() => (dropTarget = null)}
         ondrop={(e) => !c.dynamic && drop(e, c.id)}
+        oncontextmenu={(e) => openMenu(e, c)}
       >
+        <span class="spine" style="background:{c.color ?? NO_COLOR};opacity:{c.color ? 1 : 0.35}"></span>
         {#if renaming === c.id}
-          <Icon name="folder" size={17} />
           <input
             type="text"
-            class="input input-sm h-7 min-w-0 flex-1"
+            class="input input-xs h-6 min-w-0 flex-1"
             bind:value={renameValue}
             use:focus
             onblur={commitRename}
@@ -94,33 +140,74 @@
           />
         {:else}
           <button
-            class="flex h-full min-w-0 flex-1 items-center gap-2 text-left"
-            disabled={c.dynamic}
-            title={c.dynamic ? "Managed by Steam, so it can't be changed here" : ''}
+            class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
+            title={c.dynamic ? 'Managed by Steam, so it can’t be changed here' : ''}
             onclick={() => (app.view = c.id)}
-            ondblclick={() => !c.dynamic && startRename(c.id, c.name)}
+            ondblclick={() => !c.dynamic && ((renaming = c.id), (renameValue = c.name))}
           >
-            <Icon name={c.dynamic ? 'lock' : 'folder'} size={17} />
             <span class="truncate">{c.name}</span>
+            {#if c.dynamic}<span class="shrink-0 text-muted"><Icon name="lock" size={12} /></span>{/if}
           </button>
-
-          {#if confirmDelete === c.id}
-            <button class="btn btn-error btn-xs" onclick={() => remove(c.id)}>Delete?</button>
-            <button class="btn btn-ghost btn-xs" onclick={() => (confirmDelete = null)}>No</button>
-          {:else}
-            <span class="text-xs text-muted group-hover:hidden group-focus-within:hidden">{c.count}</span>
-            {#if !c.dynamic}
-              <span class="hidden items-center group-hover:flex group-focus-within:flex">
-                <button class="btn btn-ghost btn-xs btn-square" aria-label="Rename" title="Rename" onclick={() => startRename(c.id, c.name)}><Icon name="edit" size={14} /></button>
-                <button class="btn btn-ghost btn-xs btn-square" aria-label="Delete" title="Delete" onclick={() => (confirmDelete = c.id)}><Icon name="trash" size={14} /></button>
-              </span>
-            {/if}
+          {#if app.changedSet.has(c.id)}<span class="size-1.5 shrink-0 rounded-full bg-accent" title="Has changes that aren’t in Steam yet"></span>{/if}
+          <span class="w-8 text-right text-xs tabular-nums text-muted {c.dynamic ? '' : 'group-focus-within:invisible group-hover:invisible'}">{c.count.toLocaleString()}</span>
+          {#if !c.dynamic}
+            <!-- Shown on hover, and whenever it has keyboard focus, so Tab can reach it. -->
+            <button class="btn btn-ghost btn-xs btn-square absolute right-1 opacity-0 focus-visible:opacity-100 group-hover:opacity-100 {menu?.id === c.id ? 'opacity-100' : ''}" aria-label="More for {c.name}" aria-haspopup="menu" aria-expanded={menu?.id === c.id} onclick={(e) => { e.stopPropagation(); openMenu(e, c); }}><Icon name="dots" size={16} weight="bold" /></button>
           {/if}
         {/if}
       </div>
     {/each}
   </nav>
 
-  <button class="btn btn-sm btn-soft" onclick={() => (app.dialog = 'new')}><Icon name="plus" size={16} /> New collection</button>
-  <p class="px-1 text-xs leading-relaxed text-muted">Drag games onto a collection to add them. Hold Shift to move instead.</p>
+  <div class="border-t border-base-300 p-3 text-xs leading-relaxed text-muted">Drag games onto a collection to add them. Hold Shift to move them out of the one you’re in.</div>
 </aside>
+
+{#if menu && menuFor}
+  <div
+    bind:this={menuEl}
+    class="fixed z-50 w-64 rounded-box border border-base-300 bg-base-100 p-1.5 text-sm shadow-[0_8px_28px_rgb(15_20_30/0.22)]"
+    style="left:{Math.min(menu.x, window.innerWidth - 270)}px;top:{Math.min(menu.y, window.innerHeight - 330)}px"
+    role="menu"
+    aria-label="{menuFor.name} options"
+    tabindex="-1"
+    onclick={(e) => e.stopPropagation()}
+    onkeydown={menuKeys}
+  >
+    <p class="px-2 pb-1 pt-1 text-xs text-muted">Colour</p>
+    <div class="grid grid-cols-9 gap-1 px-1.5 pb-2" role="group" aria-label="Colour">
+      {#each COLORS as col}
+        <button
+          role="menuitem"
+          class="size-6 rounded-[4px] ring-offset-2 ring-offset-base-100 {menuFor.color === col.value ? 'ring-2 ring-base-content' : ''}"
+          style="background:{col.value}"
+          aria-label={col.name}
+          aria-current={menuFor.color === col.value}
+          title={col.name}
+          onclick={() => act(() => app.setColor(menuFor.id, col.value))}
+        ></button>
+      {/each}
+      <button role="menuitem" class="grid size-6 place-items-center rounded-[4px] border border-base-300 text-muted {menuFor.color ? '' : 'ring-2 ring-base-content ring-offset-2 ring-offset-base-100'}" aria-label="No colour" title="No colour" onclick={() => act(() => app.setColor(menuFor.id, null))}><Icon name="close" size={12} /></button>
+    </div>
+    <div class="my-1 border-t border-base-300"></div>
+    {#each [
+      ['edit', 'Rename', () => ((renaming = menuFor.id), (renameValue = menuFor.name))],
+      ['copy', 'Duplicate', () => app.duplicateCollection(menuFor.id)],
+      ['merge', 'Merge others into this…', () => app.openMerge(menuFor.id)],
+      ['rules', 'Auto-fill…', () => app.openRuleDialog(menuFor.id)],
+    ] as [icon, label, run] ([label])}
+      <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-[4px] px-2 py-1.5 text-left hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none" onclick={() => act(run as () => void)}><Icon name={icon as string} size={15} /> {label}</button>
+    {/each}
+    <div class="my-1 border-t border-base-300"></div>
+    {#if confirmDelete === menuFor.id}
+      <div class="flex flex-col gap-2 px-2 py-1.5">
+        <span>Delete {menuFor.name}? Its {menuFor.count.toLocaleString()} {menuFor.count === 1 ? 'game stays' : 'games stay'} in your library, and Undo brings the collection back.</span>
+        <span class="flex justify-end gap-1.5">
+          <button role="menuitem" class="btn btn-ghost btn-xs" onclick={() => (confirmDelete = null)}>Keep it</button>
+          <button role="menuitem" class="btn btn-error btn-xs" onclick={() => act(() => app.deleteCollection(menuFor.id))}>Delete</button>
+        </span>
+      </div>
+    {:else}
+      <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-[4px] px-2 py-1.5 text-left text-error hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none" onclick={async () => { confirmDelete = menuFor.id; await tick(); menuEl?.querySelector<HTMLElement>('.btn-error')?.focus(); }}><Icon name="trash" size={15} /> Delete…</button>
+    {/if}
+  </div>
+{/if}

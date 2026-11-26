@@ -1,113 +1,197 @@
 <script lang="ts">
-  import { app } from './store.svelte';
-  import type { Sort } from './store.svelte';
+  import { tick } from 'svelte';
+  import { describeCond } from './describe';
+  import { app, saveLayout } from './store.svelte';
+  import type { SortKey } from './columns';
   import FilterPanel from './FilterPanel.svelte';
   import Icon from './Icon.svelte';
 
   let open = $state(false);
+  let trigger: HTMLButtonElement;
+  let filterDialog = $state<HTMLDivElement>();
+  let advancedFirst = $state(false);
 
-  const sorts: [Sort, string][] = [
+  async function openFilters(advanced = false) {
+    advancedFirst = advanced;
+    open = true;
+    await tick();
+    filterDialog?.focus();
+  }
+  function closeFilters() {
+    open = false;
+    trigger?.focus();
+  }
+
+  const describe = describeCond;
+
+  const sorts: [SortKey, string][] = [
     ['name', 'Name'],
-    ['playtime', 'Most played'],
-    ['recent', 'Recently played'],
-    ['review', 'Best reviewed'],
+    ['last', 'Recently played'],
+    ['played', 'Most played'],
+    ['reviews', 'Best reviewed'],
+    ['metacritic', 'Metacritic'],
+    ['release', 'Release date'],
+    ['perfect', 'Time to 100%'],
+    ['size', 'Size on disk'],
+    ['developer', 'Developer'],
+    ['price', 'Price'],
+    ['discount', 'Biggest sale'],
+    ['reviewCount', 'Most reviewed'],
   ];
+  const deckNames = ['Unknown on Deck', 'Deck unsupported', 'Deck playable', 'Deck verified'];
+  const platformNames = (bits: number) => [['Windows', 1], ['macOS', 2], ['Linux', 4]].filter(([, b]) => bits & (b as number)).map(([n]) => n).join(' and ');
+  const choiceText = { installed: ['Installed', 'Not installed'], vr: ['VR', 'No VR'], earlyAccess: ['Early access', 'Not early access'], hasAchievements: ['Has achievements', 'No achievements'], family: ['Family games', 'Not family games'] } as const;
 
   const playedLabels = { never: 'Never played', played: 'Played', idle: 'Not played in 7+ days' } as const;
-  const achLabels = { complete: '100% complete', incomplete: 'In progress' } as const;
+  const achLabels = { complete: 'Every achievement', incomplete: 'Achievements in progress' } as const;
   const flagName = (id: number) => app.library?.flags.find((f) => f.id === id)?.name ?? String(id);
-  const pretty = (s: string) => s.replace(/\b\w/g, (c) => c.toUpperCase());
+  const pretty = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
   function saveAsCollection() {
     open = false;
-    app.dialog = 'new';
+    app.openNewCollection();
   }
+
+  const chip = 'tagbox pr-1.5';
+
+  let keys = $state(false);
+  const SHORTCUTS: [string, string][] = [
+    ['Arrows', 'Move between games'],
+    ['Ctrl+click', 'Pick several games'],
+    ['Shift+click', 'Pick a run of games'],
+    ['Ctrl+A', 'Pick everything shown'],
+    ['Esc', 'Clear the selection'],
+    ['Delete', 'Take picked games out of this collection'],
+    ['Ctrl+Z', 'Undo'],
+    ['Ctrl+Shift+Z', 'Redo'],
+    ['Ctrl+S', 'Review and save to Steam'],
+    ['Shift+drag', 'Move to a collection instead of adding'],
+  ];
+  const total = $derived((app.library?.games ?? []).filter((g) => app.inView(g)).length);
+  const viewColor = $derived(app.isCollectionView ? app.collections.find((c) => c.id === app.view)?.color : null);
+
+  const layouts: ['grid' | 'compact' | 'list', string, string][] = [
+    ['grid', 'grid', 'Large covers'],
+    ['compact', 'gridSmall', 'Small covers'],
+    ['list', 'list', 'Table'],
+  ];
 </script>
 
-<svelte:window onclick={() => (open = false)} />
+<svelte:window onclick={() => ((open = false), (keys = false))} onkeydown={(e) => { if (open && e.key === 'Escape') closeFilters(); if (e.key === 'Escape') keys = false; }} />
 
-<header class="flex flex-col gap-3.5 px-5 pb-3.5 pt-5">
-  <div class="flex items-center justify-between gap-3">
-    <div class="flex min-w-0 items-baseline gap-3">
-      <h1 class="truncate font-display text-[26px] font-semibold tracking-tight">{app.viewTitle}</h1>
-      <span class="shrink-0 text-sm text-muted">{app.visible.length} {app.visible.length === 1 ? 'game' : 'games'}</span>
-    </div>
-
-    <div class="flex items-center gap-1">
-      <button class="btn btn-ghost btn-sm" disabled={app.undoStack.length === 0 || app.busy} onclick={() => app.undo()} title="Undo the last change (Ctrl+Z)">
-        <Icon name="undo" size={16} /> Undo
-      </button>
-      <button class="btn btn-ghost btn-sm" onclick={() => (app.dialog = 'history')} title="See and restore earlier versions">
-        <Icon name="history" size={16} /> History
-      </button>
-      <button class="btn btn-ghost btn-sm btn-square" onclick={() => (app.dialog = 'settings')} aria-label="Settings" title="Settings">
-        <Icon name="gear" size={18} />
-      </button>
-      <button class="btn btn-primary btn-sm ml-1" onclick={() => (app.dialog = 'organize')}>
-        <Icon name="wand" size={16} /> Auto-organize
-      </button>
+<header class="flex flex-col gap-3 px-6 pb-3 pt-5">
+  <div class="flex items-center gap-3">
+    {#if viewColor}<span class="h-6 w-[5px] shrink-0 rounded-[1px]" style="background:{viewColor}" aria-hidden="true"></span>{/if}
+    <h1 class="min-w-0 truncate font-display text-[28px] font-bold leading-tight">{app.viewTitle}</h1>
+    {#if app.library}<span class="shrink-0 pt-1.5 text-sm tabular-nums text-muted">{app.visible.length.toLocaleString()}{app.visible.length !== total ? ` of ${total.toLocaleString()}` : ''}</span>{/if}
+    <span class="flex-1"></span>
+    <div class="flex items-center gap-0.5">
+      <button class="btn btn-ghost btn-sm btn-square" disabled={!app.draft.undo || app.busy} onclick={() => app.undo()} title={app.draft.undo ? `Undo ${app.draft.undo} (Ctrl+Z)` : 'Nothing to undo'} aria-label="Undo"><Icon name="undo" size={17} /></button>
+      <button class="btn btn-ghost btn-sm btn-square" disabled={!app.draft.redo || app.busy} onclick={() => app.redo()} title={app.draft.redo ? `Redo ${app.draft.redo} (Ctrl+Shift+Z)` : 'Nothing to redo'} aria-label="Redo"><Icon name="redo" size={17} /></button>
+      <button class="btn btn-ghost btn-sm btn-square" onclick={() => (app.dialog = 'history')} title="Earlier versions" aria-label="History"><Icon name="history" size={17} /></button>
+      <div class="relative">
+        <button class="btn btn-ghost btn-sm btn-square" aria-expanded={keys} title="Keyboard shortcuts" aria-label="Keyboard shortcuts" onclick={(e) => { e.stopPropagation(); keys = !keys; }}><Icon name="keyboard" size={17} /></button>
+        {#if keys}
+          <div class="absolute right-0 top-10 z-40 w-72 rounded-box border border-base-300 bg-base-100 p-3 text-[13px] shadow-[0_8px_28px_rgb(15_20_30/0.2)]" role="dialog" aria-label="Keyboard shortcuts" tabindex="-1" onclick={(e) => e.stopPropagation()} onkeydown={(e) => e.key === 'Escape' && (keys = false)}>
+            <p class="mb-2 font-semibold">Keyboard shortcuts</p>
+            <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5">
+              {#each SHORTCUTS as [k, what]}<dt><kbd class="kbd kbd-sm">{k}</kbd></dt><dd class="text-muted">{what}</dd>{/each}
+            </dl>
+          </div>
+        {/if}
+      </div>
+      <button class="btn btn-ghost btn-sm btn-square" onclick={() => (app.dialog = 'settings')} title="Settings" aria-label="Settings"><Icon name="gear" size={17} /></button>
+      <button class="btn btn-primary btn-sm ml-2" onclick={() => (app.dialog = 'organize')} title="Sort games into collections by your rules, after showing you what would change"><Icon name="rules" size={16} /> Auto-organize</button>
     </div>
   </div>
 
-  <div class="flex items-center gap-2.5">
-    <label class="input input-sm h-9 w-full max-w-md items-center gap-2">
-      <Icon name="search" size={16} />
-      <input type="search" class="grow" placeholder="Search by name, genre or tag" bind:value={app.search} />
+  <div class="flex flex-wrap items-center gap-2">
+    <label class="input input-sm h-8 min-w-36 flex-1 max-w-sm items-center gap-2 bg-base-100">
+      <Icon name="search" size={15} />
+      <input type="search" aria-label="Search library" class="min-w-0 grow" placeholder="Search names, tags or studios" bind:value={app.search} />
     </label>
 
     <div class="relative">
       <button
-        class="btn btn-sm h-9 {app.activeFilterCount > 0 ? 'btn-primary btn-outline' : ''}"
+        class="btn btn-sm h-8 border-base-300 bg-base-100 font-medium {app.activeFilterCount ? 'border-base-content/40' : ''}"
+        bind:this={trigger}
+        aria-haspopup="dialog" aria-expanded={open}
         onclick={(e) => {
           e.stopPropagation();
-          open = !open;
+          if (open) closeFilters(); else openFilters();
         }}
       >
-        <Icon name="filter" size={16} /> Filters
-        {#if app.activeFilterCount}<span class="badge badge-primary badge-sm">{app.activeFilterCount}</span>{/if}
+        <Icon name="filter" size={15} /> Filters
+        {#if app.activeFilterCount}<span class="rounded bg-primary px-1.5 text-xs leading-5 text-primary-content tabular-nums">{app.activeFilterCount}</span>{/if}
       </button>
 
       {#if open}
         <div
-          class="absolute left-0 top-11 z-30 flex max-h-[calc(100vh-180px)] w-[440px] flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-2xl"
+          class="absolute left-1/2 top-10 z-30 flex max-h-[calc(100vh-180px)] w-[460px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-[0_12px_36px_rgb(15_20_30/0.22)]"
+          bind:this={filterDialog}
           role="dialog"
           aria-label="Filters"
           tabindex="-1"
           onclick={(e) => e.stopPropagation()}
-          onkeydown={(e) => e.key === 'Escape' && (open = false)}
+          onkeydown={() => {}}
         >
-          <div class="overflow-y-auto p-4"><FilterPanel /></div>
-          <footer class="flex items-center gap-2 border-t border-base-300 bg-base-100 p-3">
+          <div class="overflow-y-auto p-4"><FilterPanel {advancedFirst} /></div>
+          <footer class="flex items-center gap-2 border-t border-base-300 p-3">
             <button class="btn btn-ghost btn-sm" onclick={() => app.clearFilters()} disabled={!app.activeFilterCount}>Clear</button>
             <span class="flex-1"></span>
-            {#if app.activeFilterCount}
-              <button class="btn btn-soft btn-sm" onclick={saveAsCollection} title="Make a collection from these filters">Save as collection…</button>
-            {/if}
-            <button class="btn btn-primary btn-sm" onclick={() => (open = false)}>Show {app.visible.length} games</button>
+            {#if app.activeFilterCount}<button class="btn btn-sm" onclick={saveAsCollection}>Save as collection…</button>{/if}
+            <button class="btn btn-primary btn-sm" onclick={closeFilters}>Show {app.visible.length.toLocaleString()}</button>
           </footer>
         </div>
       {/if}
     </div>
 
-    <select class="select select-sm h-9 w-44" bind:value={app.sort} aria-label="Sort by">
-      {#each sorts as [v, label]}<option value={v}>{label}</option>{/each}
-    </select>
+    <div class="join">
+      <select class="select join-item select-sm h-8 w-40 bg-base-100" value={app.sort} onchange={(e) => app.setSort(e.currentTarget.value as SortKey)} aria-label="Sort by">
+        {#each sorts as [v, label]}<option value={v}>{label}</option>{/each}
+        {#if !sorts.some(([v]) => v === app.sort)}<option value={app.sort}>The column you picked</option>{/if}
+      </select>
+      <button class="btn join-item btn-sm btn-square h-8 border-base-300 bg-base-100" onclick={() => (app.sortDesc = !app.sortDesc)} aria-label={app.sortDesc ? 'Descending' : 'Ascending'} title={app.sortDesc ? 'Highest first' : 'Lowest first'}>
+        <span class="inline-block transition-transform {app.sortDesc ? '' : 'rotate-180'}"><Icon name="caret" size={14} /></span>
+      </button>
+    </div>
 
-    <div class="join ml-auto">
-      <button class="btn join-item btn-sm h-9 btn-square {app.layout === 'grid' ? 'btn-active' : ''}" onclick={() => (app.layout = 'grid')} aria-label="Grid view" title="Grid"><Icon name="grid" size={16} /></button>
-      <button class="btn join-item btn-sm h-9 btn-square {app.layout === 'list' ? 'btn-active' : ''}" onclick={() => (app.layout = 'list')} aria-label="List view" title="List"><Icon name="list" size={16} /></button>
+    <div class="seg ml-auto" role="group" aria-label="Show as">
+      {#each layouts as [v, icon, label]}
+        <button class="grid place-items-center !px-2" onclick={() => ((app.layout = v), saveLayout(v))} aria-label={label} aria-pressed={app.layout === v} title={label}><Icon name={icon} size={15} /></button>
+      {/each}
     </div>
   </div>
 
   {#if app.activeFilterCount}
     <div class="flex flex-wrap items-center gap-1.5">
-      {#if app.played !== 'any'}<button class="btn btn-primary btn-xs h-7 rounded-full" onclick={() => (app.played = 'any')}>{playedLabels[app.played]} <Icon name="close" size={12} /></button>{/if}
-      {#if app.ach !== 'any'}<button class="btn btn-primary btn-xs h-7 rounded-full" onclick={() => (app.ach = 'any')}>{achLabels[app.ach]} <Icon name="close" size={12} /></button>{/if}
-      {#if app.minReview}<button class="btn btn-primary btn-xs h-7 rounded-full" onclick={() => (app.minReview = 0)}>{app.minReview}%+ reviews <Icon name="close" size={12} /></button>{/if}
-      {#each app.flagFilter as f}<button class="btn btn-primary btn-xs h-7 rounded-full" onclick={() => app.toggleFlag(f)}>{pretty(flagName(f))} <Icon name="close" size={12} /></button>{/each}
-      {#each app.tagFilter as t}<button class="btn btn-primary btn-xs h-7 rounded-full" onclick={() => app.toggleTag(t)}>{app.tagNames[t] ?? t} <Icon name="close" size={12} /></button>{/each}
+      {#if app.readyAdvanced}
+        {@const summary = describe(app.readyAdvanced)}
+        <span class="inline-flex h-7 max-w-full items-stretch rounded-field border border-base-300 bg-base-100 text-[13px]">
+          <button class="min-w-0 max-w-72 truncate px-2 hover:underline" title={summary} onclick={(e) => { e.stopPropagation(); openFilters(true); }}>{summary}</button>
+          <button class="px-1.5 hover:bg-base-200" aria-label="Clear advanced conditions" onclick={() => (app.advanced = { all: [] })}><Icon name="close" size={12} /></button>
+        </span>
+      {/if}
+      {#if app.played !== 'any'}<button class={chip} onclick={() => (app.played = 'any')}>{playedLabels[app.played]} <Icon name="close" size={12} /></button>{/if}
+      {#if app.ach !== 'any'}<button class={chip} onclick={() => (app.ach = 'any')}>{achLabels[app.ach]} <Icon name="close" size={12} /></button>{/if}
+      {#if app.minReview}<button class={chip} onclick={() => (app.minReview = 0)}>Reviews {app.minReview}% or better <Icon name="close" size={12} /></button>{/if}
+      {#if app.maxPerfectHours}<button class={chip} onclick={() => (app.maxPerfectHours = 0)}>100% in {app.maxPerfectHours} h or less <Icon name="close" size={12} /></button>{/if}
+      {#each Object.entries(choiceText) as [key, [yes, no]]}
+        {@const value = app[key as keyof typeof choiceText]}
+        {#if value !== 'any'}<button class={chip} onclick={() => (app[key as keyof typeof choiceText] = 'any')}>{value === 'yes' ? yes : no} <Icon name="close" size={12} /></button>{/if}
+      {/each}
+      {#if app.deck.length}<button class={chip} onclick={() => (app.deck = [])}>{app.deck.map((d) => deckNames[d]).join(', ')} <Icon name="close" size={12} /></button>{/if}
+      {#if app.platforms}<button class={chip} onclick={() => (app.platforms = 0)}>Runs on {platformNames(app.platforms)} <Icon name="close" size={12} /></button>{/if}
+      {#if app.yearFrom || app.yearTo}<button class={chip} onclick={() => (app.yearFrom = app.yearTo = 0)}>Released {app.yearFrom && app.yearTo ? `${app.yearFrom}–${app.yearTo}` : app.yearFrom ? `${app.yearFrom} or later` : `${app.yearTo} or earlier`} <Icon name="close" size={12} /></button>{/if}
+      {#if app.onSale !== 'any'}<button class={chip} onclick={() => (app.onSale = 'any')}>{app.onSale === 'yes' ? 'On sale' : 'Not on sale'} <Icon name="close" size={12} /></button>{/if}
+      {#if app.maxPrice}<button class={chip} onclick={() => (app.maxPrice = 0)}>Costs {app.maxPrice} or less <Icon name="close" size={12} /></button>{/if}
+      {#if app.minReviews}<button class={chip} onclick={() => (app.minReviews = 0)}>{app.minReviews.toLocaleString()}+ reviews <Icon name="close" size={12} /></button>{/if}
+      {#if app.proton.length}<button class={chip} onclick={() => (app.proton = [])}>ProtonDB {app.proton.join(', ')} <Icon name="close" size={12} /></button>{/if}
+      {#if app.studio.trim()}<button class={chip} onclick={() => (app.studio = '')}>Studio: {app.studio.trim()} <Icon name="close" size={12} /></button>{/if}
+      {#each app.flagFilter as f}<button class={chip} onclick={() => app.toggleFlag(f)}>{pretty(flagName(f))} <Icon name="close" size={12} /></button>{/each}
+      {#each app.tagFilter as t}<button class={chip} onclick={() => app.toggleTag(t)}>{app.tagNames[t] ?? t} <Icon name="close" size={12} /></button>{/each}
       <button class="btn btn-ghost btn-xs h-7" onclick={() => app.clearFilters()}>Clear all</button>
-      <button class="btn btn-soft btn-xs h-7" onclick={saveAsCollection}><Icon name="plus" size={13} /> Save as collection</button>
+      <button class="btn btn-ghost btn-xs h-7" onclick={saveAsCollection}><Icon name="plus" size={13} /> Save as collection</button>
     </div>
   {/if}
 </header>

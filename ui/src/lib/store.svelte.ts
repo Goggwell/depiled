@@ -1,50 +1,182 @@
 import * as api from './api';
-import type { Achievements, Automation, Game, Library, OpView, OrganizerEvent, Settings, SmartRule, Status } from './api';
-import { emptyRule, matchesRule } from './criteria';
+import type { Automation, DraftState, Game, Kind, OnlineProgress, Library, OpView, OrganizerEvent, Patch, Settings, SmartRule, Status } from './api';
+import { countTests, editableGroup, emptyRule, matchesRule, readyCondition } from './criteria';
+import type { Cond } from './criteria';
+import { columnById, COLUMNS, DEFAULT_COLUMNS } from './columns';
+import type { ColumnId, SortKey } from './columns';
 
 export type PlayedFilter = 'any' | 'never' | 'played' | 'idle';
 export type AchFilter = 'any' | 'complete' | 'incomplete';
-export type Sort = 'name' | 'playtime' | 'recent' | 'review';
+export type Choice = 'any' | 'yes' | 'no';
 /** 'new' creates a collection; 'rule' edits the auto-fill criteria of `ruleFor`. */
-export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings';
+export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings' | 'save' | 'merge';
 export type Theme = 'system' | 'light' | 'dark';
 
 const THEME_KEY = 'depiled-theme';
-const COLLATOR = new Intl.Collator();
-const THEME_NAMES = { light: 'olive-day', dark: 'olive-night' } as const;
+const COLUMNS_KEY = 'depiled-columns';
 
-const DAY = 86400;
+function loadColumns(): ColumnId[] {
+  try {
+    const saved = JSON.parse(localStorage.getItem(COLUMNS_KEY) ?? 'null');
+    if (Array.isArray(saved)) return saved.filter((id) => COLUMNS.some((c) => c.id === id));
+  } catch {
+    /* blocked storage or a bad value: use the defaults */
+  }
+  return [...DEFAULT_COLUMNS];
+}
+const LAYOUT_KEY = 'depiled-layout';
+function loadLayout(): 'grid' | 'compact' | 'list' {
+  try {
+    const v = localStorage.getItem(LAYOUT_KEY);
+    if (v === 'grid' || v === 'compact' || v === 'list') return v;
+  } catch {
+    /* blocked storage: the default */
+  }
+  return 'grid';
+}
+export function saveLayout(v: string) {
+  try {
+    localStorage.setItem(LAYOUT_KEY, v);
+  } catch {
+    /* not worth failing over */
+  }
+}
+// Numbers inside names sort as numbers ("Part 2" before "Part 10"), and case is ignored.
+const COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: 'base' });
+const THEME_NAMES = { light: 'shelf-day', dark: 'shelf-night' } as const;
+
+/** Colours offered for collections. Picked to read well on both themes and on cover art, and
+ *  kept clear of amber, which means unsaved changes. */
+export const COLORS: { name: string; value: string }[] = [
+  { name: 'Red', value: '#e5484d' },
+  { name: 'Lime', value: '#86b31a' },
+  { name: 'Moss', value: '#46a758' },
+  { name: 'Teal', value: '#12a594' },
+  { name: 'Sky', value: '#0090ff' },
+  { name: 'Indigo', value: '#5b5bd6' },
+  { name: 'Violet', value: '#8e4ec6' },
+  { name: 'Pink', value: '#d6409f' },
+];
+/** Other things in the library besides games, each with its own place in the sidebar. */
+export const OTHER_KINDS: { kind: Kind; label: string }[] = [
+  { kind: 'demo', label: 'Demos' },
+  { kind: 'playtest', label: 'Playtests' },
+  { kind: 'software', label: 'Software' },
+  { kind: 'tool', label: 'Tools' },
+  { kind: 'soundtrack', label: 'Soundtracks' },
+  { kind: 'video', label: 'Videos' },
+  { kind: 'unknown', label: 'Unknown to Steam' },
+];
+
+/** In the All games view: Steam games and games added to Steam by hand. */
+export const inGames = (g: Game) => g.kind === 'game' || g.kind === 'shortcut';
+/** What rules and auto-fill look at, as in the Rust side's `is_game`. */
+const ruleGame = (g: Game) => g.kind === 'game' && !g.family;
+
+/** Collections without a colour use the muted text colour. */
+export const NO_COLOR = 'var(--muted)';
 
 interface Toast {
   text: string;
-  canUndo: boolean;
+  undo?: boolean;
   error?: boolean;
 }
 
+const emptyDraft = (): DraftState => ({ pending: 0, changed: [], undo: null, redo: null, steam_running: false, rebased: false });
+
 class AppStore {
   status = $state<Status | null>(null);
-  // `$state.raw` for the big, replace-as-a-whole data: it is never edited in place, and not
-  // wrapping tens of thousands of games in reactive proxies saves a lot of memory and time.
+  // `$state.raw` for the big data: replaced as a whole, never edited in place, and not
+  // wrapping thousands of games in reactive proxies saves memory and time.
   library = $state.raw<Library | null>(null);
-  achievements = $state.raw<Record<string, Achievements>>({});
+  draft = $state<DraftState>(emptyDraft());
   loading = $state(false);
   busy = $state(false);
+  saving = $state(false);
+  /** Whether the save in progress closes Steam first, so the status bar can say what's happening. */
+  savingClosesSteam = $state(false);
+  /** The last save this session, shown in the status bar until the next change. */
+  lastSaved = $state<{ changes: number; at: number; verified: boolean } | null>(null);
+  /** The online refresh in progress, if any. */
+  online = $state<OnlineProgress | null>(null);
+  private recheckOnline = false;
 
   search = $state('');
-  /** 'all', 'none' (in no collection), or a collection id. */
+  /** 'all' (games), 'none' (games in no collection), 'kind:<kind>', or a collection id. */
   view = $state('all');
   tagFilter = $state<number[]>([]);
   flagFilter = $state<number[]>([]);
   played = $state<PlayedFilter>('any');
   ach = $state<AchFilter>('any');
   minReview = $state(0);
-  sort = $state<Sort>('name');
-  layout = $state<'grid' | 'list'>('grid');
+  /** Hours to unlock everything, by the SteamHunters median. 0 means any. */
+  maxPerfectHours = $state(0);
+  installed = $state<Choice>('any');
+  /** Steam Deck categories to show: 1 unsupported, 2 playable, 3 verified, 0 unknown. */
+  deck = $state<number[]>([]);
+  /** Platform bits that must all be supported: 1 Windows, 2 macOS, 4 Linux. */
+  platforms = $state(0);
+  vr = $state<Choice>('any');
+  earlyAccess = $state<Choice>('any');
+  hasAchievements = $state<Choice>('any');
+  family = $state<Choice>('any');
+  yearFrom = $state(0);
+  yearTo = $state(0);
+  studio = $state('');
+  onSale = $state<Choice>('any');
+  /** Most to pay, in whole units of the region's currency. 0 means any. */
+  maxPrice = $state(0);
+  /** Fewest store reviews, to skip obscure games. 0 means any. */
+  minReviews = $state(0);
+  /** ProtonDB tiers to show. */
+  proton = $state<string[]>([]);
+  /** Conditions with AND, OR and NOT, built in the filter panel. */
+  advanced = $state<Cond>({ all: [] });
+  readyAdvanced = $derived(readyCondition(this.advanced));
+  advancedCount = $derived(this.readyAdvanced ? countTests(this.readyAdvanced) : 0);
+  unfinishedAdvanced = $derived(countTests(this.advanced) > this.advancedCount);
+
+  /** The quick filters auto-fill rules have no fields for, as one condition. */
+  quickCondition = $derived.by((): Cond[] => {
+    const out: Cond[] = [];
+    const yesNo = (field: 'installed' | 'vr' | 'early_access' | 'family' | 'on_sale', c: Choice) => c !== 'any' && out.push({ field, op: 'is', value: c === 'yes' });
+    yesNo('installed', this.installed);
+    yesNo('vr', this.vr);
+    yesNo('early_access', this.earlyAccess);
+    yesNo('family', this.family);
+    yesNo('on_sale', this.onSale);
+    if (this.hasAchievements !== 'any') out.push(this.hasAchievements === 'yes' ? { field: 'achievements', op: 'gt', value: 0 } : { not: { field: 'achievements', op: 'gt', value: 0 } });
+    if (this.maxPerfectHours) out.push({ field: 'perfect_hours', op: 'lte', value: this.maxPerfectHours });
+    if (this.deck.length) out.push({ field: 'deck', op: 'in', value: this.deck.map((d) => ['unknown', 'unsupported', 'playable', 'verified'][d]) });
+    if (this.platforms) out.push({ field: 'platforms', op: 'has_all', value: [['windows', 1], ['mac', 2], ['linux', 4]].filter(([, b]) => this.platforms & (b as number)).map(([n]) => n) });
+    if (this.yearFrom || this.yearTo) out.push({ field: 'release_year', op: 'between', value: [this.yearFrom || null, this.yearTo || null] });
+    if (this.studio.trim()) out.push({ any: [{ field: 'developer', op: 'contains', value: this.studio.trim() }, { field: 'publisher', op: 'contains', value: this.studio.trim() }] });
+    if (this.maxPrice) out.push({ field: 'price', op: 'lte', value: this.maxPrice });
+    if (this.minReviews) out.push({ field: 'review_count', op: 'gte', value: this.minReviews });
+    if (this.proton.length) out.push({ field: 'proton', op: 'in', value: this.proton });
+    return out;
+  });
+  sort = $state<SortKey>('name');
+  sortDesc = $state(false);
+  columns = $state<ColumnId[]>(loadColumns());
+  /** Large covers, small covers (more per screen for big libraries), or the table. */
+  layout = $state<'grid' | 'compact' | 'list'>(loadLayout());
 
   selected = $state.raw<number[]>([]);
   anchor: number | null = null;
 
-  settings = $state<Settings>({ automation: null });
+  settings = $state<Settings>({
+    automation: null,
+    online_stats: null,
+    region: null,
+    online_achievements: true,
+    online_prices: true,
+    online_protondb: true,
+    online_hunters: true,
+    reopen_steam: true,
+  });
+  /** Country for store prices: the user's choice, or this computer's region. */
+  region = $derived(this.settings.region ?? this.library?.online.detected_region ?? 'US');
   settingsLoaded = $state(false);
   promptDismissed = $state(false);
   /** Changes the watcher found and is waiting for the user to approve. */
@@ -53,26 +185,30 @@ class AppStore {
 
   /** Asked once, the first time, how automatic things should be. */
   showAutomationPrompt = $derived(this.settingsLoaded && this.settings.automation === null && !this.promptDismissed);
+  showStatsPrompt = $derived(this.settingsLoaded && this.settings.automation !== null && this.settings.online_stats === null && !this.promptDismissed);
 
   dialog = $state<Dialog>(null);
+  /** Collection the merge dialog merges into. */
+  mergeInto = $state<string | null>(null);
   toast = $state<Toast | null>(null);
-  undoStack = $state<{ id: string; label: string }[]>([]);
   private toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   collections = $derived(this.library?.collections ?? []);
   tagNames = $derived(this.library?.tags ?? {});
+  colorOf = $derived(new Map(this.collections.map((c) => [c.id, c.color ?? NO_COLOR])));
+  changedSet = $derived(new Set(this.draft.changed));
 
   /** Tags worth offering as filters: common ones first. */
   tagChoices = $derived.by(() => {
     const counts = new Map<number, number>();
     for (const g of this.library?.games ?? []) for (const t of g.tags) counts.set(t, (counts.get(t) ?? 0) + 1);
     return [...counts.entries()]
-      .filter(([, n]) => n >= 3)
       .sort((a, b) => b[1] - a[1])
       .map(([id, n]) => ({ id, name: this.tagNames[id] ?? String(id), count: n }));
   });
 
-  hasAchievements = $derived(Object.keys(this.achievements).length > 0);
+  achievementsKnown = $derived((this.library?.games ?? []).filter((g) => g.achievements).length);
+  huntersKnown = $derived((this.library?.games ?? []).filter((g) => g.hunters && g.hunters.median_minutes > 0).length);
 
   /** The current filters as a rule, ignoring the search box and which collection is open. */
   criteria = $derived<SmartRule>({
@@ -81,10 +217,12 @@ class AppStore {
     min_review: this.minReview,
     flags: this.flagFilter,
     tags: this.tagFilter,
+    condition: this.quickCondition.length ? { all: [...this.quickCondition, ...(this.readyAdvanced ? [this.readyAdvanced] : [])] } : this.readyAdvanced,
   });
 
-  /** Every game the current filters match, wherever it is filed. */
-  criteriaMatches = $derived((this.library?.games ?? []).filter((g) => matchesRule(this.criteria, g, this.achievements)));
+  /** Every game the current filters match, wherever it is filed. Like auto-fill itself, only
+   *  games the account owns: Family games come and go as their owner plays them. */
+  criteriaMatches = $derived((this.library?.games ?? []).filter((g) => ruleGame(g) && matchesRule(this.criteria, g)));
 
   /** What each collection auto-fills with, by collection id. */
   smartRules = $state.raw<Record<string, SmartRule>>({});
@@ -95,7 +233,7 @@ class AppStore {
   newMatches(collectionId: string): Game[] {
     const rule = this.smartRules[collectionId];
     if (!rule) return [];
-    return (this.library?.games ?? []).filter((g) => !g.collections.includes(collectionId) && matchesRule(rule, g, this.achievements));
+    return (this.library?.games ?? []).filter((g) => ruleGame(g) && !g.collections.includes(collectionId) && matchesRule(rule, g));
   }
 
   loadCriteria(rule: SmartRule) {
@@ -104,6 +242,7 @@ class AppStore {
     this.minReview = rule.min_review;
     this.flagFilter = [...rule.flags];
     this.tagFilter = [...rule.tags];
+    this.advanced = rule.condition ? editableGroup(structuredClone(rule.condition)) : { all: [] };
   }
 
   visible = $derived.by(() => {
@@ -112,34 +251,75 @@ class AppStore {
     const q = this.search.trim().toLowerCase();
     const now = Date.now() / 1000;
     const matchingTags = q ? Object.entries(lib.tags).filter(([, n]) => n.toLowerCase() === q).map(([id]) => Number(id)) : [];
+    const rule = this.criteria;
     const list = lib.games.filter((g) => {
-      if (this.view === 'none' ? g.collections.length > 0 : this.view !== 'all' && !g.collections.includes(this.view)) return false;
-      if (q && !g.name.toLowerCase().includes(q) && !matchingTags.some((t) => g.tags.includes(t))) return false;
-      return matchesRule(this.criteria, g, this.achievements, now);
+      if (!this.inView(g)) return false;
+      if (q && !g.name.toLowerCase().includes(q) && !matchingTags.some((t) => g.tags.includes(t)) && !g.developers.some((d) => d.toLowerCase().includes(q)) && !g.publishers.some((p) => p.toLowerCase().includes(q))) return false;
+      return matchesRule(rule, g, now);
     });
-    const by: Record<Sort, (a: Game, b: Game) => number> = {
-      // One shared collator is many times faster than calling localeCompare per comparison.
-      name: (a, b) => COLLATOR.compare(a.name, b.name),
-      playtime: (a, b) => b.playtime_minutes - a.playtime_minutes,
-      recent: (a, b) => b.last_played - a.last_played,
-      review: (a, b) => b.review_percent - a.review_percent,
-    };
-    return list.sort(by[this.sort]);
+    // Unknown values sort last whatever the direction; ties fall back to the name.
+    const key = this.sort;
+    const value = key === 'name' ? (g: Game) => g.name : columnById(key).value;
+    const dir = this.sortDesc ? -1 : 1;
+    const decorated = list.map((g) => ({ g, v: value(g) }));
+    decorated.sort((a, b) => {
+      if (a.v === null || b.v === null) return a.v === b.v ? COLLATOR.compare(a.g.name, b.g.name) : a.v === null ? 1 : -1;
+      const c = typeof a.v === 'string' ? COLLATOR.compare(a.v, b.v as string) : a.v - (b.v as number);
+      return c ? c * dir : COLLATOR.compare(a.g.name, b.g.name);
+    });
+    return decorated.map((d) => d.g);
   });
 
   activeFilterCount = $derived(
-    this.tagFilter.length + this.flagFilter.length + (this.played !== 'any' ? 1 : 0) + (this.ach !== 'any' ? 1 : 0) + (this.minReview > 0 ? 1 : 0),
+    this.tagFilter.length +
+      this.flagFilter.length +
+      (this.played !== 'any' ? 1 : 0) +
+      (this.ach !== 'any' ? 1 : 0) +
+      (this.minReview > 0 ? 1 : 0) +
+      (this.maxPerfectHours > 0 ? 1 : 0) +
+      [this.installed, this.vr, this.earlyAccess, this.hasAchievements, this.family].filter((c) => c !== 'any').length +
+      (this.deck.length ? 1 : 0) +
+      (this.platforms ? 1 : 0) +
+      (this.yearFrom || this.yearTo ? 1 : 0) +
+      (this.studio.trim() ? 1 : 0) +
+      (this.onSale !== 'any' ? 1 : 0) +
+      (this.maxPrice ? 1 : 0) +
+      (this.minReviews ? 1 : 0) +
+      (this.proton.length ? 1 : 0) +
+      this.advancedCount,
   );
 
-  uncategorizedCount = $derived((this.library?.games ?? []).filter((g) => g.collections.length === 0).length);
+  uncategorizedCount = $derived((this.library?.games ?? []).filter((g) => inGames(g) && g.collections.length === 0).length);
+  gameCount = $derived((this.library?.games ?? []).filter(inGames).length);
+  kindCounts = $derived.by(() => {
+    const counts: Partial<Record<Kind, number>> = {};
+    for (const g of this.library?.games ?? []) counts[g.kind] = (counts[g.kind] ?? 0) + 1;
+    return counts;
+  });
+
+  /** Whether a game belongs in the open view. Collections show everything filed in them. */
+  inView(g: Game): boolean {
+    const v = this.view;
+    if (v === 'all') return inGames(g);
+    if (v === 'none') return inGames(g) && g.collections.length === 0;
+    if (v.startsWith('kind:')) return g.kind === v.slice(5);
+    return g.collections.includes(v);
+  }
 
   /** For fast "is this game selected?" checks while drawing. */
   selectedSet = $derived(new Set(this.selected));
-
+  /** The open view is one of the user's collections. */
+  isCollectionView = $derived(this.view !== 'all' && this.view !== 'none' && !this.view.startsWith('kind:'));
   selectedGames = $derived((this.library?.games ?? []).filter((g) => this.selectedSet.has(g.appid)));
 
   viewTitle = $derived(
-    this.view === 'all' ? 'All games' : this.view === 'none' ? 'Not in any collection' : (this.collections.find((c) => c.id === this.view)?.name ?? 'Games'),
+    this.view === 'all'
+      ? 'All games'
+      : this.view === 'none'
+        ? 'Not in a collection'
+        : this.view.startsWith('kind:')
+          ? (OTHER_KINDS.find((k) => 'kind:' + k.kind === this.view)?.label ?? 'Games')
+          : (this.collections.find((c) => c.id === this.view)?.name ?? 'Games'),
   );
 
   // ---- loading -----------------------------------------------------------------------
@@ -147,40 +327,135 @@ class AppStore {
   async init() {
     this.loadTheme();
     this.status = await api.status();
-    this.settings = await api.getSettings().catch(() => ({ automation: null }));
+    this.settings = await api.getSettings().catch(() => this.settings);
     this.settingsLoaded = true;
     await api.onOrganizer((e) => this.onOrganizer(e)).catch(() => {});
-    if (this.status.ready) await this.refresh();
-  }
-
-  // ---- automation and settings -------------------------------------------------------
-
-  /** What the background watcher reports. */
-  private async onOrganizer(e: OrganizerEvent) {
-    if (e.type === 'pending') {
-      this.pending = e.ops;
-    } else {
-      if (e.snapshot) this.undoStack = [{ id: e.snapshot, label: 'auto-organize' }, ...this.undoStack];
-      this.pending = null;
-      await this.refreshQuietly().catch(() => {});
-      this.say(`Organized ${e.applied} ${e.applied === 1 ? 'change' : 'changes'} for you`, !!e.snapshot);
+    await api.onOnline((e) => this.onOnline(e)).catch(() => {});
+    if (this.status.steam_found) {
+      await this.refresh();
+      this.refreshOnline();
     }
   }
 
-  async setAutomation(mode: Automation) {
+  async refresh() {
+    this.loading = true;
     try {
-      this.settings = { ...this.settings, automation: mode };
+      this.setLibrary(await api.loadLibrary());
+      this.smartRules = await api.smartRules().catch(() => ({}));
+    } catch (e) {
+      this.fail(e);
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  private setLibrary(lib: Library) {
+    this.library = lib;
+    this.draft = lib.draft;
+    const ids = new Set(lib.games.map((g) => g.appid));
+    this.selected = this.selected.filter((id) => ids.has(id));
+    this.keepView();
+  }
+
+  /** The open collection may be gone (deleted, merged, or undone). */
+  private keepView() {
+    if (this.isCollectionView && !this.collections.some((c) => c.id === this.view)) this.view = 'all';
+  }
+
+  /** Applies what an edit changed, without reloading the library. */
+  private applyPatch(p: Patch) {
+    const lib = this.library;
+    if (!lib) return;
+    const moved = p.membership;
+    const games = Object.keys(moved).length ? lib.games.map((g) => (g.appid in moved ? { ...g, collections: moved[g.appid] } : g)) : lib.games;
+    this.library = { ...lib, games, collections: p.collections, draft: p.draft };
+    this.draft = p.draft;
+    this.keepView();
+  }
+
+  // ---- background events -------------------------------------------------------------
+
+  private async onOrganizer(e: OrganizerEvent) {
+    if (e.type === 'changed') {
+      // Steam's files moved on (a game was played, or Steam saved). Reload quietly.
+      this.draft = { ...this.draft, steam_running: e.steam_running };
+      if (!this.busy && !this.saving) await api.loadLibrary().then((l) => this.setLibrary(l)).catch(() => {});
+      // A new game, or one just played, gets its online details straight away.
+      if (this.online) this.recheckOnline = true;
+      else this.refreshOnline();
+    } else if (e.type === 'pending') {
+      this.pending = e.ops;
+    } else {
+      this.pending = null;
+      await api.loadLibrary().then((l) => this.setLibrary(l)).catch(() => {});
+      this.say(e.saved ? `Organized ${e.applied} ${e.applied === 1 ? 'change' : 'changes'} and saved them to Steam` : `Organized ${e.applied} ${e.applied === 1 ? 'change' : 'changes'}. They will be saved when Steam closes.`, false);
+    }
+  }
+
+  private async onOnline(e: OnlineProgress) {
+    this.online = e.finished ? null : e;
+    if (e.finished) {
+      if (e.errors.length) this.say(e.errors.join(' '), false, true);
+      // Only the online caches changed, so Steam's own files aren't read again.
+      if (e.changed !== false) await api.loadLibrary(true).then((l) => this.setLibrary(l)).catch(() => {});
+      if (this.recheckOnline) {
+        this.recheckOnline = false;
+        this.refreshOnline();
+      }
+    }
+  }
+
+  stopOnline() {
+    this.recheckOnline = false;
+    api.stopOnline().catch((e) => this.fail(e));
+  }
+
+  /** Fetches whatever online extras are due (new games, a week or a day old); everything
+   *  with `force`. Does nothing while offline extras are switched off. */
+  async refreshOnline(force = false) {
+    if (!this.settings.online_stats || this.online) return;
+    this.online = { task: 'online details', done: 0, total: 0, finished: false, errors: [] };
+    try {
+      // Set pending before IPC: a cache-only worker can finish before invoke resolves.
+      const started = await api.refreshOnline(this.region, force);
+      if (!started && !this.settings.online_stats) this.online = null;
+    } catch (e) {
+      this.online = null;
+      this.fail(e);
+    }
+  }
+  // ---- settings ----------------------------------------------------------------------
+
+  async updateSettings(change: Partial<Settings>) {
+    try {
+      this.settings = { ...this.settings, ...change };
       await api.setSettings($state.snapshot(this.settings) as Settings);
-      if (mode !== 'notify') this.pending = null;
+      if (change.automation && change.automation !== 'notify') this.pending = null;
+      if (change.region !== undefined || Object.keys(change).some((k) => k.startsWith('online_'))) {
+        if (this.online) {
+          this.recheckOnline = this.settings.online_stats === true;
+          await api.stopOnline();
+        } else if (this.settings.online_stats) {
+          this.refreshOnline();
+        }
+      }
     } catch (e) {
       this.fail(e);
     }
   }
 
-  /** Applies what the watcher offered. */
-  async applyPending() {
-    this.pending = null;
-    await this.applyRules();
+  setAutomation(mode: Automation) {
+    return this.updateSettings({ automation: mode });
+  }
+
+  async disableDebugPort() {
+    try {
+      await api.disableDebugPort();
+      this.status = await api.status();
+      this.say("Steam's debug port is switched off. It takes effect the next time Steam starts.", false);
+    } catch (e) {
+      this.fail(e);
+    }
   }
 
   loadTheme() {
@@ -188,8 +463,10 @@ class AppStore {
     try {
       saved = localStorage.getItem(THEME_KEY);
     } catch {
-      /* private window or blocked storage: fall back to following the system */
+      /* private window or blocked storage: follow the system */
     }
+    // The browser demo takes ?theme=light or ?theme=dark, for screenshots of either theme.
+    if (!api.isDesktop) saved = new URLSearchParams(location.search).get('theme') ?? saved;
     this.theme = saved === 'light' || saved === 'dark' ? saved : 'system';
     this.applyTheme();
   }
@@ -210,24 +487,7 @@ class AppStore {
     else root.setAttribute('data-theme', THEME_NAMES[this.theme]);
   }
 
-  async refresh() {
-    this.loading = true;
-    try {
-      this.library = await api.loadLibrary();
-      this.smartRules = await api.smartRules().catch(() => ({}));
-      const ids = new Set(this.library.games.map((g) => g.appid));
-      this.selected = this.selected.filter((id) => ids.has(id));
-      if (this.view !== 'all' && this.view !== 'none' && !this.collections.some((c) => c.id === this.view)) this.view = 'all';
-    } catch (e) {
-      this.fail(e);
-    } finally {
-      this.loading = false;
-    }
-    // Achievement progress can take a few seconds the first time, so it fills in afterwards.
-    api.loadAchievements().then((a) => (this.achievements = a)).catch(() => {});
-  }
-
-  // ---- selection ---------------------------------------------------------------------
+  // ---- selection and filters ---------------------------------------------------------
 
   select(game: Game, e: { ctrlKey?: boolean; metaKey?: boolean; shiftKey?: boolean }) {
     const ids = this.visible.map((g) => g.appid);
@@ -257,6 +517,40 @@ class AppStore {
     this.played = 'any';
     this.ach = 'any';
     this.minReview = 0;
+    this.maxPerfectHours = 0;
+    this.installed = this.vr = this.earlyAccess = this.hasAchievements = this.family = 'any';
+    this.deck = [];
+    this.platforms = 0;
+    this.yearFrom = this.yearTo = 0;
+    this.studio = '';
+    this.onSale = 'any';
+    this.maxPrice = this.minReviews = 0;
+    this.proton = [];
+    this.advanced = { all: [] };
+  }
+
+  /** Sorts by key in its natural direction. */
+  setSort(key: SortKey) {
+    this.sort = key;
+    this.sortDesc = key === 'name' ? false : columnById(key).desc;
+  }
+
+  /** Sorts by a column; choosing the same column again flips the direction. */
+  sortBy(key: SortKey) {
+    if (this.sort === key) this.sortDesc = !this.sortDesc;
+    else {
+      this.sort = key;
+      this.sortDesc = key === 'name' ? false : columnById(key).desc;
+    }
+  }
+
+  toggleColumn(id: ColumnId) {
+    this.columns = this.columns.includes(id) ? this.columns.filter((c) => c !== id) : COLUMNS.map((c) => c.id).filter((c) => c === id || this.columns.includes(c));
+    try {
+      localStorage.setItem(COLUMNS_KEY, JSON.stringify(this.columns));
+    } catch {
+      /* not worth failing over */
+    }
   }
 
   toggleTag(id: number) {
@@ -267,104 +561,43 @@ class AppStore {
     this.flagFilter = this.flagFilter.includes(id) ? this.flagFilter.filter((t) => t !== id) : [...this.flagFilter, id];
   }
 
-  // ---- changes -----------------------------------------------------------------------
+  // ---- edits -------------------------------------------------------------------------
 
-  /** Runs a change, remembers its undo checkpoint, refreshes, and tells the user. */
-  private async change(label: string, run: () => Promise<string | null | { snapshot: string | null; message: string }>, message: string) {
-    if (this.busy) return false;
+  /** Runs an edit on the draft and shows what happened. Edits are instant and stay in the
+   *  app until saved, so there is nothing to wait for. */
+  private async edit(run: () => Promise<Patch>, message: (p: Patch) => string | null) {
+    if (this.busy) return null;
     this.busy = true;
     try {
-      const result = await run();
-      const checkpoint = result && typeof result === 'object' ? result.snapshot : result;
-      if (checkpoint) this.undoStack = [{ id: checkpoint, label }, ...this.undoStack];
-      await this.refreshQuietly();
-      this.say(result && typeof result === 'object' ? result.message : message, !!checkpoint);
-      return true;
+      const p = await run();
+      this.applyPatch(p);
+      const text = message(p);
+      if (text) this.say(text, true);
+      return p;
     } catch (e) {
       this.fail(e);
-      return false;
+      return null;
     } finally {
       this.busy = false;
     }
   }
 
-  private async refreshQuietly() {
-    this.library = await api.loadLibrary();
-    this.smartRules = await api.smartRules().catch(() => this.smartRules);
-    // The open collection may be gone (for example after undoing its creation).
-    if (this.view !== 'all' && this.view !== 'none' && !this.collections.some((c) => c.id === this.view)) this.view = 'all';
-  }
-
-  // ---- smart collections -------------------------------------------------------------
-
-  /** Creates a collection and fills it with every game the current filters match. */
-  createSmart(name: string, auto: boolean) {
-    const rule = $state.snapshot(this.criteria) as SmartRule;
-    return this.change(
-      `create ${name}`,
-      async () => {
-        const r = await api.createSmartCollection(name, rule, auto);
-        return { snapshot: r.snapshot, message: `Created "${name}" with ${r.added} ${r.added === 1 ? 'game' : 'games'}` };
-      },
-      '',
-    );
-  }
-
-  /** Adds games that fit the collection's saved criteria. */
-  fillCollection(id: string) {
-    const name = this.collections.find((c) => c.id === id)?.name ?? 'collection';
-    return this.change(
-      `fill ${name}`,
-      async () => {
-        const r = await api.fillCollection(id);
-        return { snapshot: r.snapshot, message: r.added ? `Added ${r.added} ${r.added === 1 ? 'game' : 'games'} to ${name}` : `${name} is already up to date` };
-      },
-      '',
-    );
-  }
-
-  /** Saves the current filters as a collection's auto-fill criteria, or clears them. */
-  async saveRule(id: string, rule: SmartRule | null) {
-    if (this.busy) return false;
-    this.busy = true;
-    try {
-      await api.setSmartRule(id, rule ? ($state.snapshot(rule) as SmartRule) : null);
-      this.smartRules = await api.smartRules();
-      this.say(rule ? 'Auto-fill saved' : 'Auto-fill turned off', false);
-      return true;
-    } catch (e) {
-      this.fail(e);
-      return false;
-    } finally {
-      this.busy = false;
-    }
-  }
-
-  openRuleDialog(collectionId: string) {
-    this.ruleFor = collectionId;
-    this.loadCriteria(this.smartRules[collectionId] ?? emptyRule());
-    this.dialog = 'rule';
-  }
+  private nameOf = (id: string) => this.collections.find((c) => c.id === id)?.name ?? 'collection';
+  private games = (n: number) => `${n} ${n === 1 ? 'game' : 'games'}`;
 
   addToCollection(appids: number[], collectionId: string, move = false) {
-    const name = this.collections.find((c) => c.id === collectionId)?.name ?? 'collection';
-    const from = move && this.view !== 'all' && this.view !== 'none' && this.view !== collectionId ? [this.view] : [];
+    const name = this.nameOf(collectionId);
+    const from = move && this.isCollectionView && this.view !== collectionId ? [this.view] : [];
     const n = appids.length;
-    return this.change(
-      `add to ${name}`,
-      () => api.moveGames(appids, [collectionId], from, `${from.length ? 'move' : 'add'} ${n} to ${name}`),
-      `${from.length ? 'Moved' : 'Added'} ${n} ${n === 1 ? 'game' : 'games'} ${from.length ? 'to' : 'to'} ${name}`,
+    return this.edit(
+      () => api.moveGames(appids, [collectionId], from, `${from.length ? 'move' : 'add'} ${this.games(n)} to ${name}`),
+      () => `${from.length ? 'Moved' : 'Added'} ${this.games(n)} to ${name}`,
     );
   }
 
   removeFromCollection(appids: number[], collectionId: string) {
-    const name = this.collections.find((c) => c.id === collectionId)?.name ?? 'collection';
-    const n = appids.length;
-    return this.change(
-      `remove from ${name}`,
-      () => api.moveGames(appids, [], [collectionId], `remove ${n} from ${name}`),
-      `Removed ${n} ${n === 1 ? 'game' : 'games'} from ${name}`,
-    );
+    const name = this.nameOf(collectionId);
+    return this.edit(() => api.moveGames(appids, [], [collectionId], `take ${this.games(appids.length)} out of ${name}`), () => `Took ${this.games(appids.length)} out of ${name}`);
   }
 
   toggleMembership(appid: number, collectionId: string) {
@@ -373,83 +606,161 @@ class AppStore {
     return game.collections.includes(collectionId) ? this.removeFromCollection([appid], collectionId) : this.addToCollection([appid], collectionId);
   }
 
-  createCollection(name: string, appids: number[] = []) {
-    return this.change(`create ${name}`, () => api.createCollection(name, appids), `Created "${name}"`);
+  async createCollection(name: string, appids: number[] = []) {
+    const p = await this.edit(() => api.createCollection(name, appids), () => `Created ${name.trim()}`);
+    return p?.value ?? null;
   }
 
   renameCollection(id: string, name: string) {
-    return this.change(`rename to ${name}`, () => api.renameCollection(id, name), `Renamed to "${name}"`);
+    return this.edit(() => api.renameCollection(id, name), () => `Renamed to ${name.trim()}`);
   }
 
   deleteCollection(id: string) {
-    const name = this.collections.find((c) => c.id === id)?.name ?? 'collection';
-    return this.change(`delete ${name}`, () => api.deleteCollection(id), `Deleted "${name}". Your games are still in your library.`);
+    const name = this.nameOf(id);
+    return this.edit(() => api.deleteCollection(id), () => `Deleted ${name}. The games are still in your library.`);
   }
 
-  async undo() {
-    const last = this.undoStack[0];
-    if (!last || this.busy) return;
-    this.busy = true;
-    try {
-      await api.restoreSnapshot(last.id);
-      this.undoStack = this.undoStack.slice(1);
-      await this.refreshQuietly();
-      this.say(`Undid: ${last.label}`, false);
-    } catch (e) {
-      this.fail(e);
-    } finally {
-      this.busy = false;
-    }
+  async duplicateCollection(id: string) {
+    const p = await this.edit(() => api.duplicateCollection(id), (p) => `Made ${this.nameOf(p.value ?? '')}`);
+    if (p?.value) this.view = p.value;
   }
 
-  async restore(snapshotId: string, label: string) {
-    this.busy = true;
-    try {
-      await api.restoreSnapshot(snapshotId);
-      await this.refreshQuietly();
-      this.say(`Restored the collections from "${label}"`, false);
-    } catch (e) {
-      this.fail(e);
-    } finally {
-      this.busy = false;
-    }
+  mergeCollections(sources: string[], into: string) {
+    const name = this.nameOf(into);
+    return this.edit(() => api.mergeCollections(sources, into), () => `Merged ${sources.length} ${sources.length === 1 ? 'collection' : 'collections'} into ${name}`);
+  }
+
+  setColor(id: string, color: string | null) {
+    return this.edit(() => api.setColor(id, color), () => null);
+  }
+
+  undo() {
+    if (!this.draft.undo) return;
+    const label = this.draft.undo;
+    return this.edit(() => api.undo(), () => `Undid: ${label}`);
+  }
+
+  redo() {
+    if (!this.draft.redo) return;
+    const label = this.draft.redo;
+    return this.edit(() => api.redo(), () => `Redid: ${label}`);
+  }
+
+  discard() {
+    return this.edit(() => api.discard(), () => 'Discarded the changes that weren’t in Steam yet');
+  }
+
+  restore(snapshotId: string) {
+    return this.edit(() => api.restoreSnapshot(snapshotId), () => 'Restored the earlier version. Save to put it back in Steam.');
   }
 
   async applyRules() {
-    // Whatever was waiting is being applied now, however the user got here.
     this.pending = null;
-    await this.change('auto-organize', async () => (await api.applyRules()).snapshot, 'Your library is organized');
+    await this.edit(() => api.applyRules(), (p) => (Number(p.value) ? `Organized ${p.value} ${p.value === '1' ? 'change' : 'changes'}` : 'Your library already follows your rules'));
+  }
+
+  async applyPending() {
+    await this.applyRules();
+  }
+
+  /** Writes the draft to Steam. With `closeSteam`, Steam is closed first and reopened after. */
+  async save(closeSteam: boolean) {
+    if (this.saving) return false;
+    this.saving = true;
+    try {
+      this.savingClosesSteam = closeSteam;
+      const r = await api.save(closeSteam);
+      this.lastSaved = { changes: r.changes, at: Date.now(), verified: r.verified };
+      this.setLibrary(await api.loadLibrary());
+      // A good save is confirmed in the status bar, where it stays; only a mismatch needs a toast.
+      if (!r.verified) this.say('Saved, but Steam’s file doesn’t match exactly. Open History to compare or restore.', false, true);
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    } finally {
+      this.saving = false;
+      this.status = await api.status().catch(() => this.status);
+    }
+  }
+
+  // ---- smart collections -------------------------------------------------------------
+
+  async createSmart(name: string, auto: boolean) {
+    const rule = $state.snapshot(this.criteria) as SmartRule;
+    const p = await this.edit(
+      () => api.createSmartCollection(name, rule, auto),
+      (p) => `Created ${name.trim()} with ${this.games(Number(p.value?.split(':')[1] ?? 0))}`,
+    );
+    if (p && auto) this.smartRules = await api.smartRules().catch(() => this.smartRules);
+    return p?.value?.split(':')[0] ?? null;
+  }
+
+  fillCollection(id: string) {
+    const name = this.nameOf(id);
+    return this.edit(() => api.fillCollection(id), (p) => (Number(p.value) ? `Added ${this.games(Number(p.value))} to ${name}` : `${name} is already up to date`));
+  }
+
+  async saveRule(id: string, rule: SmartRule | null) {
+    try {
+      await api.setSmartRule(id, rule ? ($state.snapshot(rule) as SmartRule) : null);
+      this.smartRules = await api.smartRules();
+      this.say(rule ? 'Auto-fill saved' : 'Auto-fill turned off', false);
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    }
+  }
+
+  private restoreFilters: (() => void) | null = null;
+
+  private rememberFilters() {
+    const keys = ['played', 'ach', 'minReview', 'flagFilter', 'tagFilter', 'advanced', 'maxPerfectHours',
+      'installed', 'vr', 'earlyAccess', 'hasAchievements', 'family', 'deck', 'platforms', 'yearFrom',
+      'yearTo', 'studio', 'onSale', 'maxPrice', 'minReviews', 'proton'] as const;
+    const saved = Object.fromEntries(keys.map((key) => [key, $state.snapshot(this[key])]));
+    this.restoreFilters = () => Object.assign(this, saved);
+  }
+
+  openNewCollection() {
+    this.rememberFilters();
+    this.dialog = 'new';
+  }
+
+  closeRuleEditor(restore: boolean) {
+    if (restore) this.restoreFilters?.();
+    this.restoreFilters = null;
+    this.ruleFor = null;
+    this.dialog = null;
+  }
+
+  openRuleDialog(collectionId: string) {
+    this.rememberFilters();
+    this.clearFilters();
+    this.ruleFor = collectionId;
+    this.loadCriteria(this.smartRules[collectionId] ?? emptyRule());
+    this.dialog = 'rule';
+  }
+
+  openMerge(into: string) {
+    this.mergeInto = into;
+    this.dialog = 'merge';
   }
 
   // ---- toasts ------------------------------------------------------------------------
 
-  say(text: string, canUndo: boolean) {
-    this.toast = { text, canUndo };
+  say(text: string, undo: boolean, error = false) {
+    this.toast = { text, undo, error };
     clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => (this.toast = null), 7000);
+    this.toastTimer = setTimeout(() => (this.toast = null), error ? 10000 : 6000);
   }
 
   fail(e: unknown) {
-    this.toast = { text: String(e instanceof Error ? e.message : e), canUndo: false, error: true };
-    clearTimeout(this.toastTimer);
-    this.toastTimer = setTimeout(() => (this.toast = null), 10000);
+    this.say(String(e instanceof Error ? e.message : e), false, true);
   }
 }
 
 export const app = new AppStore();
 
-export function fmtHours(minutes: number): string {
-  if (minutes <= 0) return 'Never played';
-  const h = minutes / 60;
-  return h < 1 ? `${minutes} min` : `${h < 10 ? h.toFixed(1) : Math.round(h)} h`;
-}
-
-export function fmtAgo(ts: number): string {
-  if (!ts) return 'Never';
-  const days = Math.floor((Date.now() / 1000 - ts) / DAY);
-  if (days <= 0) return 'Today';
-  if (days === 1) return 'Yesterday';
-  if (days < 30) return `${days} days ago`;
-  if (days < 365) return `${Math.floor(days / 30)} mo ago`;
-  return `${Math.floor(days / 365)} y ago`;
-}
+export { fmtAgo, fmtHours, fmtSize, fmtSpan, fmtYear } from './format';
