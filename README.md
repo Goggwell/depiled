@@ -1,112 +1,102 @@
 # Depiled
 
-Organize your Steam library collections, with undo.
+A desktop app for sorting your Steam library into collections, with undo.
 
-Depiled reads your library straight from Steam's files, lets you sort games into
-collections by hand or by rules you write, and saves the result back to Steam. Every save
-is snapshotted first, so nothing can be lost.
+If your library has grown into a pile of hundreds of games, Depiled helps you file them:
+drag games onto collections, fill collections from filters, or let a few simple rules keep
+*Started*, *Unfinished*, *Completed* and *Planned* up to date as you play. You see every
+change before it reaches Steam, and you can take any of it back.
 
-- **Rules you name yourself.** "Not played in 7 days" goes to *Paused*, never-started games
-  go to *Planned*, fully unlocked games go to *Completed*. Collection names and thresholds
-  are yours to set.
-- **Smart collections.** A collection can fill itself from filters (played state,
-  achievements, review score, Steam flags, tags) and has an "Add matching games" button.
-- **Edit freely, then save.** Changes stay in the app until you review and save them to
-  Steam. Undo and redo any step, or restore an earlier version from History.
-- **Tidy collections.** Colour, rename, duplicate and merge collections.
-- **Automation you control.** Never, tell me, or do it for me.
-- **Search, filters, drag and drop,** grid and list views, light and dark themes.
-- **No account or API key.** The library, playtime, tags, Steam Deck status and install sizes
-  come from Steam's own files. Optional details from the internet, each fetched in the
-  background and kept on disk so the app works the same offline:
-  - achievement progress, read from your public Steam profile (Game details must be public)
-    for games you've played: again after you play, when an update adds achievements, and
-    every six to eight months;
-  - prices, sales and review counts for your region (detected from your computer, or picked
-    in Settings), weekly; regions used before switch instantly;
-  - completion times from [SteamHunters](https://steamhunters.com), checked weekly;
-  - Linux and Steam Deck ratings from [ProtonDB](https://www.protondb.com), each game about
-    every 30–45 days, or every 90–135 days for established ratings.
+It works from the files Steam keeps on your computer. No Steam sign-in, no API key, and no
+internet needed unless you want the optional extras.
 
-  The first download depends on library size and which sources are enabled. Settings shows
-  the request count and estimated data downloaded this month.
-- **More than games.** Demos, playtests, software, soundtracks and games you added to Steam
-  by hand show up too, each in its own place. Rules and auto-fill only ever touch games.
-- **Fast.** A 25,000-game library filters and sorts in well under 100 ms.
+## What it does
 
-## How it works
+- Shows your whole library as covers or as a sortable table, with demos, software,
+  soundtracks and Steam Family games kept apart from your own games.
+- Lets you create, colour, rename, duplicate, merge and delete collections, and drag games
+  between them.
+- Filters by play status, achievements, reviews, Steam Deck and Linux support, price and
+  sales, release year, studio, features and tags, and combines anything with *and*, *or* and
+  *not* in the advanced builder.
+- Fills collections from saved filters, and keeps them topped up.
+- Keeps every edit in a draft until you review and save it, with undo, redo and a history of
+  earlier versions.
+- Optionally adds achievement progress from your public profile, regional prices and sales,
+  completion times from [SteamHunters](https://steamhunters.com) and Linux ratings from
+  [ProtonDB](https://www.protondb.com). They're fetched in the background, a little at a
+  time, and kept on disk so the app works the same offline.
 
-Steam keeps collections in `userdata/<account>/config/cloudstorage/cloud-storage-namespace-1.json`.
-Depiled reads that file (and Steam's app, license and playtime caches) any time. Saving
-needs Steam closed, because Steam rewrites the file while it runs: the save dialog closes
-Steam, writes the changes, marks them for upload so Steam syncs them to your other devices,
-and opens Steam again. If Steam changed your collections in the meantime, both sets of
-changes are kept. Some Steam versions keep a second copy of the list in their browser
-storage; when it exists it is updated too.
+There's a full tour in [docs/features.md](docs/features.md).
 
-Achievement progress is only on disk for games Steam has cached on this computer, so the
-"every achievement" rule only counts those.
 ## Install
 
-Download the installer for your system from the
-[releases page](https://github.com/Goggwell/depiled/releases):
+Get the installer for your computer from the
+[latest release](https://github.com/Goggwell/depiled/releases/latest):
 
-| System | File |
+| Computer | File |
 | --- | --- |
-| Windows 10/11, 64-bit | `Depiled_*_x64-setup.exe` |
-| Windows 10/11, 32-bit | `Depiled_*_x86-setup.exe` |
-| macOS, Apple silicon | `Depiled_*_aarch64.dmg` |
-| macOS, Intel | `Depiled_*_x64.dmg` |
+| Windows 10 or 11, 64-bit | `Depiled_<version>_x64-setup.exe` |
+| Windows 10 or 11, 32-bit | `Depiled_<version>_x86-setup.exe` |
+| Mac, Apple silicon | `Depiled_<version>_aarch64.dmg` |
+| Mac, Intel | `Depiled_<version>_x64.dmg` |
 
-Want the newest changes before a numbered release? The
-[nightly pre-release](https://github.com/Goggwell/depiled/releases/tag/nightly) is rebuilt on
-every change, and each build's installers stay downloadable for 30 days from the
-[Actions tab](https://github.com/Goggwell/depiled/actions/workflows/nightly.yml).
+The installers aren't code-signed yet. On Windows, choose **More info**, then **Run anyway**
+if SmartScreen stops it. On a Mac, right-click the app and choose **Open** the first time.
 
-The Windows installers need no admin rights. The macOS build is new and has seen less
-testing than the Windows one.
+Steam needs to have been signed in on the computer at least once; Depiled finds it on its
+own. The [nightly pre-release](https://github.com/Goggwell/depiled/releases/tag/nightly) has
+the newest changes between releases.
 
-The installers are not code-signed yet, so Windows SmartScreen and macOS Gatekeeper will
-warn on first launch.
+## How saving works
 
-## Build from source
+Steam keeps your collections in a file under its `userdata` folder and rewrites it while it
+runs, so Depiled saves with Steam closed. The save dialog closes Steam, writes the changes,
+marks them so Steam uploads them to your other devices, and opens Steam again. A copy of
+Steam's files is kept before every save, and if Steam changed something in the meantime,
+both sets of changes are kept.
 
-You need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer.
+Depiled never turns on Steam's debug port, which some tools use to control the Steam client
+but which lets any program on the computer do the same.
+
+## Building it yourself
+
+You'll need [Rust](https://rustup.rs) and [Node.js](https://nodejs.org) 20 or newer.
 
 ```bash
 cd ui
 npm install
 npx tauri dev      # run the app
-npx tauri build    # produce an installer
+npx tauri build    # make an installer
 ```
 
-Core tests and the type check:
+Tests and type checks:
 
 ```bash
 cargo test --workspace
 cd ui && npm run check
 ```
 
-### Command line
+`npm run dev` in `ui/` runs the interface in a browser with made-up games, handy for working
+on the UI without Steam.
 
-The core is also a CLI. `depiled --help` lists everything: `list`, `plan`, `apply`,
-`save`, `discard`, `snapshots`, `undo`, `export`, `import`, `smart`, `automation`, `watch`
-and `online`.
+The core is also a command-line tool: `depiled --help` lists `list`, `plan`, `apply`,
+`save`, `undo`, `export`, `import`, `smart`, `watch`, `online` and more.
 
-## Layout
-
-| Path | What lives there |
+| Folder | Holds |
 | --- | --- |
-| `src/` | Rust core: Steam file formats, rules, draft and save, snapshots, watcher |
-| `ui/src/` | Svelte 5 interface (Tailwind and daisyUI) |
-| `ui/src-tauri/` | Tauri shell around the core |
-| `tests/` | Large-library benchmark (`cargo test --release --test perf -- --ignored`) |
+| `src/` | The Rust core: Steam's file formats, rules and filters, the draft and saving, online extras |
+| `ui/src/` | The interface, in Svelte 5 with Tailwind and daisyUI |
+| `ui/src-tauri/` | The Tauri desktop shell around the core |
+| `tests/` | A large-library benchmark |
 
-## Where your data lives
+[docs/how-it-works.md](docs/how-it-works.md) explains how it's built and why.
 
-Settings, rules and snapshots are kept in `%APPDATA%\depiled` on Windows and
-`~/Library/Application Support/depiled` on macOS. Each snapshot also holds a byte-for-byte
-copy of Steam's own collection files.
+## Your data
+
+Settings, rules (`config.toml`) and saved copies live in `%APPDATA%\depiled` on Windows and
+`~/Library/Application Support/depiled` on macOS. Your collections themselves stay in
+Steam.
 
 ## License
 
