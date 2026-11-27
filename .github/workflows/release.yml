@@ -49,6 +49,10 @@ jobs:
           # Signs the update files, so the app only installs updates built here.
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+          # Where the app sends bug reports and feedback. Kept as a secret so the address (and
+          # the inbox behind it) isn't in the public code; builds without it offer to copy a
+          # report instead.
+          DEPILED_FEEDBACK_URL: ${{ secrets.FEEDBACK_URL }}
         with:
           projectPath: ui
           tagName: ${{ github.ref_name }}
