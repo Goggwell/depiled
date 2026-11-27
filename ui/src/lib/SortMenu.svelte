@@ -94,7 +94,7 @@
   {#if open}
     <div
       bind:this={menu}
-      class="absolute right-0 top-10 z-30 max-h-[min(70vh,520px)] w-56 overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1.5 text-[13px] shadow-[0_8px_28px_rgb(15_20_30/0.2)]"
+      class="absolute left-0 top-10 z-30 max-h-[min(70vh,520px)] w-56 overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1.5 text-[13px] shadow-[0_8px_28px_rgb(15_20_30/0.2)]"
       role="menu"
       aria-label="Sort"
       tabindex="-1"

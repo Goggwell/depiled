@@ -96,6 +96,7 @@
       {@render seg('Played', app.played, played, (v) => (app.played = v))}
       {@render seg('Achievements', app.ach, ach, (v) => (app.ach = v))}
       {@render seg('Installed', app.installed, choices, (v) => (app.installed = v))}
+      {@render seg('Screenshots', app.screenshots, choices, (v) => (app.screenshots = v))}
       {#if hasStore}{@render seg(`On sale (${app.library?.online.country})`, app.onSale, choices, (v) => (app.onSale = v))}{/if}
       <p class="text-xs text-muted">Achievement progress is known for {app.achievementsKnown.toLocaleString()} of your games. The rest count as unknown.</p>
     </section>
@@ -180,6 +181,8 @@
           {/each}
           {#if features.length > shownFeatures.length}
             <button class="link text-xs text-muted hover:text-base-content" onclick={() => (allFeatures = true)}>Show all {features.length}</button>
+          {:else if allFeatures && features.length > 12}
+            <button class="link text-xs text-muted hover:text-base-content" onclick={() => (allFeatures = false)}>Show fewer</button>
           {/if}
         </div>
       </section>

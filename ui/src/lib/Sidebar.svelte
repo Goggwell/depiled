@@ -178,13 +178,13 @@
             bind:value={renameValue}
             bind:this={renameInput}
             use:focus
-            onblur={(e) => !renameBox?.contains(e.relatedTarget as Node) && commitRename()}
+            onblur={(e) => !renameBox?.contains(e.relatedTarget as Node) && !(e.relatedTarget as Element | null)?.closest?.('[aria-label="Emoji"]') && commitRename()}
             onkeydown={(e) => {
               if (e.key === 'Enter') commitRename();
               if (e.key === 'Escape') renaming = null;
             }}
           />
-          <EmojiPicker target={renameInput} onpick={(v) => (renameValue = v)} />
+          <EmojiPicker target={renameInput} onpick={(v) => (renameValue = v)} ondismiss={commitRename} />
           </span>
         {:else}
           <button
@@ -225,7 +225,8 @@
   >
     <p class="px-2 pb-1 pt-1 text-xs text-muted">Colour</p>
     <!-- The colour in use has a tick in it; nothing is drawn around it, so swatches never
-         overlap. The last two are any colour (a colour wheel) and no colour. -->
+         overlap. The last two are any colour (a colour wheel) and no colour. Picking a colour
+         keeps the menu open, so colours can be tried one after another. -->
     <div class="grid grid-cols-6 gap-1.5 px-2 pb-2" role="group" aria-label="Colour">
       {#each COLORS as col (col.value)}
         <button
@@ -235,25 +236,29 @@
           aria-label={col.name}
           aria-current={menuFor.color === col.value}
           title={col.name}
-          onclick={() => act(() => app.setColor(menuFor.id, col.value))}
+          onclick={() => app.setColor(menuFor.id, col.value)}
         >{#if menuFor.color === col.value}<span class="drop-shadow-[0_1px_1px_rgb(0_0_0/0.5)]"><Icon name="check" size={14} weight="bold" /></span>{/if}</button>
       {/each}
+      <!-- The colour wheel: a rainbow ring, with your own colour inside once you've picked one,
+           so it never looks like one of the swatches. It changes as you drag. -->
       <label
-        class="relative grid size-7 cursor-pointer place-items-center rounded-[5px] text-white transition-transform hover:scale-110 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-base-content"
-        style="background:{customColor ?? 'conic-gradient(#e5484d, #ab4aba, #0090ff, #12a594, #86b31a, #ad7f58, #e5484d)'}"
-        title={customColor ? `Custom colour ${customColor}` : 'Any colour'}
+        class="relative grid size-7 cursor-pointer place-items-center rounded-[5px] p-[3px] text-white transition-transform hover:scale-110 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-base-content"
+        style="background:conic-gradient(#e5484d, #d6409f, #8e4ec6, #0090ff, #12a594, #86b31a, #ad7f58, #e5484d)"
+        title={customColor ? `Your colour, ${customColor}. Click to change it.` : 'Any colour'}
       >
-        {#if customColor}<span class="drop-shadow-[0_1px_1px_rgb(0_0_0/0.5)]"><Icon name="check" size={14} weight="bold" /></span>{/if}
+        <span class="grid size-full place-items-center rounded-[3px] {customColor ? '' : 'bg-base-100/80 text-base-content'}" style={customColor ? `background:${customColor}` : ''}>
+          {#if customColor}<span class="drop-shadow-[0_1px_1px_rgb(0_0_0/0.5)]"><Icon name="check" size={13} weight="bold" /></span>{:else}<Icon name="plus" size={12} />{/if}
+        </span>
         <input
           type="color"
           role="menuitem"
           class="absolute inset-0 size-full cursor-pointer opacity-0"
           aria-label="Any colour"
           value={customColor ?? '#5b5bd6'}
-          onchange={(e) => act(() => app.setColor(menuFor.id, e.currentTarget.value))}
+          oninput={(e) => app.liveColor(menuFor.id, e.currentTarget.value)}
         />
       </label>
-      <button role="menuitem" class="grid size-7 place-items-center rounded-[5px] border border-base-300 text-muted transition-transform hover:scale-110 hover:text-base-content" aria-label="No colour" aria-current={!menuFor.color} title="No colour" onclick={() => act(() => app.setColor(menuFor.id, null))}>
+      <button role="menuitem" class="grid size-7 place-items-center rounded-[5px] border border-base-300 text-muted transition-transform hover:scale-110 hover:text-base-content" aria-label="No colour" aria-current={!menuFor.color} title="No colour" onclick={() => app.setColor(menuFor.id, null)}>
         <Icon name={menuFor.color ? 'close' : 'check'} size={13} weight={menuFor.color ? 'regular' : 'bold'} />
       </button>
     </div>
@@ -269,7 +274,7 @@
             ['down', 'Move down', () => app.nudgeCollection(menuFor.id, 1)],
           ]
         : []),
-    ] as [icon, label, run] ([label])}
+    ] as [icon, label, run] (label)}
       <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-[4px] px-2 py-1.5 text-left hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none" onclick={() => act(run as () => void)}><Icon name={icon as string} size={15} /> {label}</button>
     {/each}
     <div class="my-1 border-t border-base-300"></div>

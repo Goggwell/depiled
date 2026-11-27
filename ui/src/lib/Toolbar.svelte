@@ -133,7 +133,7 @@
 
       {#if built}
         <div
-          class="absolute left-1/2 top-10 z-30 flex max-h-[calc(100vh-180px)] {open ? '' : 'hidden'} w-[460px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-[0_12px_36px_rgb(15_20_30/0.22)]"
+          class="absolute left-1/2 top-10 z-30 flex max-h-[calc(100vh-180px)] {open ? '' : 'hidden'} w-[520px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-[0_12px_36px_rgb(15_20_30/0.22)]"
           bind:this={filterDialog}
           role="dialog"
           aria-label="Filters"
@@ -181,6 +181,7 @@
       {#if app.deck.length}<button class={chip} onclick={() => (app.deck = [])}>{app.deck.map((d) => deckNames[d]).join(', ')} <Icon name="close" size={12} /></button>{/if}
       {#if app.platforms}<button class={chip} onclick={() => (app.platforms = 0)}>Runs on {platformNames(app.platforms)} <Icon name="close" size={12} /></button>{/if}
       {#if app.yearFrom || app.yearTo}<button class={chip} onclick={() => (app.yearFrom = app.yearTo = 0)}>Released {app.yearFrom && app.yearTo ? `${app.yearFrom}–${app.yearTo}` : app.yearFrom ? `${app.yearFrom} or later` : `${app.yearTo} or earlier`} <Icon name="close" size={12} /></button>{/if}
+      {#if app.screenshots !== 'any'}<button class={chip} onclick={() => (app.screenshots = 'any')}>{app.screenshots === 'yes' ? 'Has screenshots' : 'No screenshots'} <Icon name="close" size={12} /></button>{/if}
       {#if app.onSale !== 'any'}<button class={chip} onclick={() => (app.onSale = 'any')}>{app.onSale === 'yes' ? 'On sale' : 'Not on sale'} <Icon name="close" size={12} /></button>{/if}
       {#if app.maxPrice}<button class={chip} onclick={() => (app.maxPrice = 0)}>Costs {app.maxPrice} or less <Icon name="close" size={12} /></button>{/if}
       {#if app.minReviews}<button class={chip} onclick={() => (app.minReviews = 0)}>{app.minReviews.toLocaleString()}+ reviews <Icon name="close" size={12} /></button>{/if}

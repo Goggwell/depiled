@@ -145,6 +145,8 @@ class AppStore {
   vr = $state<Choice>('any');
   earlyAccess = $state<Choice>('any');
   hasAchievements = $state<Choice>('any');
+  /** Has screenshots, on this computer or the profile. */
+  screenshots = $state<Choice>('any');
   family = $state<Choice>('any');
   yearFrom = $state(0);
   yearTo = $state(0);
@@ -171,6 +173,7 @@ class AppStore {
     yesNo('early_access', this.earlyAccess);
     yesNo('family', this.family);
     yesNo('on_sale', this.onSale);
+    if (this.screenshots !== 'any') out.push({ field: 'has_screenshots', op: 'is', value: this.screenshots === 'yes' });
     if (this.hasAchievements !== 'any') out.push({ field: 'has_achievements', op: 'is', value: this.hasAchievements === 'yes' });
     if (this.maxPerfectHours) out.push({ field: 'perfect_hours', op: 'lte', value: this.maxPerfectHours });
     if (this.deck.length) out.push({ field: 'deck', op: 'in', value: this.deck.map((d) => ['unknown', 'unsupported', 'playable', 'verified'][d]) });
@@ -331,7 +334,7 @@ class AppStore {
       (this.ach !== 'any' ? 1 : 0) +
       (this.minReview > 0 ? 1 : 0) +
       (this.maxPerfectHours > 0 ? 1 : 0) +
-      [this.installed, this.vr, this.earlyAccess, this.hasAchievements, this.family].filter((c) => c !== 'any').length +
+      [this.installed, this.vr, this.earlyAccess, this.hasAchievements, this.family, this.screenshots].filter((c) => c !== 'any').length +
       (this.deck.length ? 1 : 0) +
       (this.platforms ? 1 : 0) +
       (this.yearFrom || this.yearTo ? 1 : 0) +
@@ -683,7 +686,7 @@ class AppStore {
     this.ach = 'any';
     this.minReview = 0;
     this.maxPerfectHours = 0;
-    this.installed = this.vr = this.earlyAccess = this.hasAchievements = this.family = 'any';
+    this.installed = this.vr = this.earlyAccess = this.hasAchievements = this.family = this.screenshots = 'any';
     this.deck = [];
     this.platforms = 0;
     this.yearFrom = this.yearTo = 0;
@@ -822,6 +825,18 @@ class AppStore {
     return this.edit(() => api.setColor(id, color), () => null);
   }
 
+  private colorTimer: ReturnType<typeof setTimeout> | undefined;
+  /** A colour while it's being picked on the colour wheel: shown at once everywhere, and
+   *  stored once the wheel has been still for a moment. Colours aren't part of what's saved to
+   *  Steam, so this makes no undo steps. */
+  liveColor(id: string, color: string) {
+    const lib = this.library;
+    if (!lib) return;
+    this.library = { ...lib, collections: lib.collections.map((c) => (c.id === id ? { ...c, color } : c)) };
+    clearTimeout(this.colorTimer);
+    this.colorTimer = setTimeout(() => api.setColor(id, color).catch((e) => this.fail(e)), 200);
+  }
+
   undo() {
     if (!this.draft.undo) return;
     const label = this.draft.undo;
@@ -905,7 +920,7 @@ class AppStore {
 
   private rememberFilters() {
     const keys = ['played', 'ach', 'minReview', 'flagFilter', 'tagFilter', 'advanced', 'maxPerfectHours',
-      'installed', 'vr', 'earlyAccess', 'hasAchievements', 'family', 'deck', 'platforms', 'yearFrom',
+      'installed', 'vr', 'earlyAccess', 'hasAchievements', 'family', 'screenshots', 'deck', 'platforms', 'yearFrom',
       'yearTo', 'studio', 'onSale', 'maxPrice', 'minReviews', 'proton'] as const;
     const saved = Object.fromEntries(keys.map((key) => [key, $state.snapshot(this[key])]));
     this.restoreFilters = () => Object.assign(this, saved);

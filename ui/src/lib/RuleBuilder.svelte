@@ -69,10 +69,10 @@
   };
 
   // Room for the arrow, and long names end in … instead of running under it.
-  const ctl = 'select select-xs h-7 truncate bg-base-100 pr-7';
+  const ctl = 'select select-sm h-8 truncate bg-base-100 pr-8';
 </script>
 
-<div class="flex flex-col gap-1.5 {depth ? 'rounded-box border border-base-300 p-2.5' : ''}">
+<div class="flex flex-col gap-3 {depth ? 'rounded-box border border-base-300 p-3.5' : ''}">
   <div class="flex items-center gap-2 text-[13px]">
     <span>Match</span>
     <select class={ctl} value={mode} onchange={(e) => setMode(e.currentTarget.value as Mode)} aria-label="How to combine">
@@ -87,29 +87,29 @@
   {#each items as item, i (i)}
     {#if 'field' in item}
       {@const f = fieldById(item.field)}
-      <div class="flex flex-wrap items-center gap-1.5">
+      <div class="flex flex-wrap items-center gap-2">
         <select class="{ctl} w-52" value={item.field} onchange={(e) => setField(item, e.currentTarget.value)} aria-label="Filter">
           {#each groups as g}<optgroup label={g}>{#each FIELDS.filter((x) => x.group === g) as x}<option value={x.id}>{x.label}</option>{/each}</optgroup>{/each}
         </select>
         {#if f && f.type !== 'bool'}
-          <select class="{ctl} w-28" value={item.op} onchange={(e) => setOp(item, e.currentTarget.value)} aria-label="Comparison">
+          <select class="{ctl} w-36" value={item.op} onchange={(e) => setOp(item, e.currentTarget.value)} aria-label="Comparison">
             {#each OPS[f.type] as [op, label]}<option value={op}>{label}</option>{/each}
           </select>
         {/if}
         {#if f?.type === 'text'}
-          <input class="input input-xs h-7 min-w-24 flex-1" value={String(item.value ?? '')} oninput={(e) => (item.value = e.currentTarget.value)} aria-label="Text" placeholder="Type a name" />
+          <input class="input input-sm h-8 min-w-24 flex-1" value={String(item.value ?? '')} oninput={(e) => (item.value = e.currentTarget.value)} aria-label="Text" placeholder="Type a name" />
         {:else if f?.type === 'num' && item.op === 'between'}
           {@const r = Array.isArray(item.value) ? item.value : [null, null]}
-          <input type="number" step="any" class="input input-xs h-7 w-20" value={r[0] ?? ''} oninput={(e) => (item.value = [numberOrNull(e.currentTarget.value), r[1]])} aria-label="From" />
+          <input type="number" step="any" class="input input-sm h-8 w-20" value={r[0] ?? ''} oninput={(e) => (item.value = [numberOrNull(e.currentTarget.value), r[1]])} aria-label="From" />
           <span class="text-xs text-muted">and</span>
-          <input type="number" step="any" class="input input-xs h-7 w-20" value={r[1] ?? ''} oninput={(e) => (item.value = [r[0], numberOrNull(e.currentTarget.value)])} aria-label="To" />
+          <input type="number" step="any" class="input input-sm h-8 w-20" value={r[1] ?? ''} oninput={(e) => (item.value = [r[0], numberOrNull(e.currentTarget.value)])} aria-label="To" />
           {#if f.unit}<span class="text-xs text-muted">{f.id === 'last_played_days' ? 'days ago' : f.unit}</span>{/if}
           {#if r[0] != null && r[1] != null && Number(r[0]) > Number(r[1])}<span class="text-xs text-error">From must be at most To.</span>{/if}
         {:else if f?.type === 'num' && item.op !== 'known' && item.op !== 'unknown'}
-          <input type="number" step="any" class="input input-xs h-7 w-24" value={item.value ?? ''} oninput={(e) => (item.value = numberOrNull(e.currentTarget.value))} aria-label="Number" />
+          <input type="number" step="any" class="input input-sm h-8 w-24" value={item.value ?? ''} oninput={(e) => (item.value = numberOrNull(e.currentTarget.value))} aria-label="Number" />
           {#if f.unit}<span class="text-xs text-muted">{f.id === 'last_played_days' ? 'days ago' : f.unit}</span>{/if}
         {:else if f?.type === 'bool'}
-          <select class="{ctl} w-20" value={item.value === false ? 'no' : 'yes'} onchange={(e) => (item.value = e.currentTarget.value === 'yes')} aria-label="Yes or no">
+          <select class="{ctl} w-24" value={item.value === false ? 'no' : 'yes'} onchange={(e) => (item.value = e.currentTarget.value === 'yes')} aria-label="Yes or no">
             <option value="yes">yes</option><option value="no">no</option>
           </select>
         {:else if f?.type === 'choice' && item.op !== 'in'}
@@ -119,20 +119,20 @@
         {:else if f && f.type !== 'num'}
           <ValuePicker options={options(item)} picked={picked(item)} counts={counts(item)} label="Choose {f.label.toLowerCase()}" onpick={(v) => toggle(item, v)} />
           {#each picked(item) as v}
-            <button class="inline-flex h-6 items-center gap-1 rounded-field border border-base-300 px-1.5 text-xs" onclick={() => toggle(item, v as string | number)}>
+            <button class="inline-flex h-7 items-center gap-1.5 rounded-field border border-base-300 px-2 text-xs hover:border-base-content/30" onclick={() => toggle(item, v as string | number)}>
               {options(item).find(([o]) => o === v)?.[1] ?? v} <Icon name="close" size={10} />
             </button>
           {/each}
         {/if}
-        <button class="btn btn-ghost btn-xs btn-square ml-auto" aria-label="Remove" onclick={() => removeAt(i)}><Icon name="close" size={13} /></button>
+        <button class="btn btn-ghost btn-sm btn-square ml-auto" aria-label="Remove" onclick={() => removeAt(i)}><Icon name="close" size={13} /></button>
       </div>
     {:else}
       <RuleBuilder cond={item} depth={depth + 1} onremove={() => removeAt(i)} />
     {/if}
   {/each}
 
-  <div class="flex gap-1">
-    <button class="btn btn-ghost btn-xs" onclick={() => add({ field: 'publisher', op: 'contains', value: '' })}><Icon name="plus" size={12} /> Add condition</button>
-    {#if depth < 2}<button class="btn btn-ghost btn-xs" onclick={() => add({ any: [] })}><Icon name="plus" size={12} /> Add group</button>{/if}
+  <div class="flex gap-1.5 pt-0.5">
+    <button class="btn btn-ghost btn-sm" onclick={() => add({ field: 'publisher', op: 'contains', value: '' })}><Icon name="plus" size={12} /> Add condition</button>
+    {#if depth < 2}<button class="btn btn-ghost btn-sm" onclick={() => add({ any: [] })}><Icon name="plus" size={12} /> Add group</button>{/if}
   </div>
 </div>
