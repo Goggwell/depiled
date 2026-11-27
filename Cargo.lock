@@ -681,7 +681,7 @@ dependencies = [
 
 [[package]]
 name = "depiled"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "clap",
@@ -696,7 +696,7 @@ dependencies = [
 
 [[package]]
 name = "depiled-app"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "depiled",

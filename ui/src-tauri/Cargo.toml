@@ -1,6 +1,6 @@
 [package]
 name = "depiled-app"
-version = "0.2.3"
+version = "0.2.4"
 description = "Organize your Steam library collections, with undo"
 edition = "2024"
 rust-version = "1.90"
