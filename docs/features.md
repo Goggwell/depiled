@@ -188,7 +188,8 @@ plus:
 
 - name, developer and publisher text;
 - playtime, last played (in days), achievement counts and percentage;
-- size on disk;
+- size on disk, and download size: roughly what installing a game would download, from Steam's
+  own data on your computer, so it's known for games you haven't installed (shown with a ~);
 - has screenshots, taken on this computer or uploaded to your profile from anywhere;
 - the collections a game is in.
 
@@ -247,8 +248,8 @@ something while it's open:
 
 ## Collection order, colours and names
 
-- **Your own order.** Steam always lists collections alphabetically. Turn on **Keep my own
-  order** in Settings and Depiled puts a number in front of each name in Steam ("01 Playing",
+- **Your own order.** Steam always lists collections alphabetically. Click the numbered-list button next to
+  **Collections** in the sidebar and Depiled puts a number in front of each name in Steam ("01 Playing",
   "02 Backlog") so they stay in the order you choose. In Depiled you see the plain names, and
   drag a collection up or down the sidebar (or use **Move up** and **Move down** in its menu).
   Rules, auto-fill and presets ignore the numbers. Turning it off takes them away again.
@@ -300,6 +301,10 @@ computer, so the app works the same with no connection.
   with a panel listing each source's last update. You can stop a fetch at any time and keep
   what arrived.
 - **Data use.** Settings shows this month's request count and estimated download.
+- **Big libraries.** A first fetch for thousands of games can take a while, mostly because
+  achievement pages are read one game at a time. Depiled says so up front with an estimate,
+  fetches recently played games first, waits and carries on if a site asks it to slow down,
+  and keeps everything that arrived if you stop it.
 - **Achievement progress needs Game details set to Public** in Steam's privacy settings;
   Depiled says so if it isn't. It also reads progress Steam leaves on your computer after a
   play session, which needs no internet at all.

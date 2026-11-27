@@ -372,6 +372,14 @@ round-numbered app IDs bunched onto a few days, hence the better hash.
   as the site's `Retry-After` asks. A 429 also doubles that site's gap for the rest of the
   run, so it isn't hit again straight away. Anything else, like a 404, is an answer, not a
   failure.
+- **Patient on big libraries.** Steam's community pages and ProtonDB are the two sources asked
+  once per game. If either is still saying "too many requests" after the short retries,
+  Depiled waits 90 seconds and carries on (up to 20 times a run) instead of stopping, so a
+  first fetch of thousands of games finishes in one go. Past 1,500 ProtonDB lookups in a run,
+  it uses two at a time, 300 ms apart, instead of four, 150 ms apart.
+- **Said up front.** Before a refresh starts, Depiled works out what is due from each source
+  and roughly how long the slowest will take. Over five minutes, a notice says so, that the
+  app works meanwhile, and that stopping keeps what arrived.
 - **Typed, lean parsing.** Answers are read into structs with only the fields Depiled uses.
   The profile page's data block holds every achievement's name, description and icon; the
   parser borrows from the page text and skips all of that without building it, and only
