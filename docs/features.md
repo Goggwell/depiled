@@ -122,9 +122,9 @@ keeps the others apart.
   If the window is too narrow for every column you picked, the name keeps its room and the
   header shows how many columns are left out.
 - **Search** matches names, studios and tags as you type.
-- **Sorting** by name, recently played, most played, reviews, Metacritic, release date, time
-  to 100%, size, developer, price, sale or review count. Click a table heading to sort by
-  it; click again to flip the order. Numbers inside names sort as numbers ("Part 2" comes
+- **Sorting** with one button that says what it does ("Last played, newest first"): pick what
+  to sort by and which way round. In the table it offers the columns you have showing; with
+  covers, all of them. Clicking a table heading sorts by it; clicking again flips the order. Numbers inside names sort as numbers ("Part 2" comes
   before "Part 10").
 - **The details panel** opens when you pick a game. It shows the game's collections (tick
   boxes to file it), playtime, reviews, Steam Deck status, platforms, size on disk, ProtonDB
@@ -172,12 +172,14 @@ active filter appears as a small label under the toolbar that you can click to r
 **More filters** opens the rest:
 
 - review score, and time to unlock every achievement;
-- has achievements, VR, early access, Family game;
+- has achievements (games without Steam's achievements feature have none), VR, early access,
+  Family game;
 - release years, developer or publisher;
 - highest price, fewest reviews;
 - Windows, macOS or Linux;
 - Steam Deck rating, ProtonDB rating;
-- Steam features (single-player, co-op, controller support and so on);
+- Steam features (single-player, co-op, controller support, trading cards and so on), the
+  ones your games have, most common first;
 - genres and tags, searchable.
 
 **Advanced** builds any combination with *and*, *or* and *not*: "match all of these", "any
@@ -187,7 +189,10 @@ plus:
 - name, developer and publisher text;
 - playtime, last played (in days), achievement counts and percentage;
 - size on disk;
+- has screenshots, taken on this computer or uploaded to your profile from anywhere;
 - the collections a game is in.
+
+Long lists, like genres and tags or features, are picked by typing part of a name.
 
 Some examples:
 
@@ -209,21 +214,29 @@ what it fills itself with ("Fills itself with games that are never played, revie
 better") and offers **Add 12 matches** whenever new games fit. You can edit the filters or
 turn auto-fill off from that bar or the collection menu.
 
-**Auto-organize** (the main toolbar button) runs your rules over the whole library and shows
-the result as a list of plain sentences, for example "Add 18 games to Unfinished" with a
-few of the game names, before anything happens. The starting rules are:
+**Auto-organize** (the main toolbar button) works with the collections you have. It tops up
+every collection that fills itself, and runs the rules in `config.toml` for collections that
+exist, then shows the result as plain sentences, for example "Add 18 games to Unfinished"
+with a few of the game names, before anything happens. It never makes a new collection;
+rules for one you don't have are left out, and it says which.
 
-| Collection | Gets games that… |
+**Presets** (the wand next to + in the sidebar, or **Presets…** in Auto-organize) set up a
+group of collections in one go. Each one fills itself and lets go of games that stop
+fitting, so games move along as you play:
+
+| Preset | Collections |
 | --- | --- |
-| Completed | have every achievement unlocked (and stay there) |
-| Unfinished | were played, but not in the last 7 days |
-| Started | were played recently |
-| Planned | have never been launched |
+| Achievement hunting | Completed, In progress, Haven't started, Quick to 100% (ten hours or less by the SteamHunters median) |
+| Backlog | Playing (played in the last two weeks), On hold, Not played yet |
+| Steam Deck | Deck Verified, Deck Playable, Not for Deck |
+| Linux | Native Linux, Runs well on Proton (ProtonDB Gold or Platinum) |
 
-These four form a group: a game sits in only one of them, and moves as you play. Rules live
-in `config.toml` in Depiled's folder, where you can rename the collections, change the
-7-day threshold, add your own rules (by tags, features, reviews, playtime, or any advanced
-condition), and keep games you've filed elsewhere out of a rule.
+A collection you already have with the same name is reused rather than duplicated, and one
+that already fills itself keeps its own criteria.
+
+The rules file, `config.toml` in Depiled's folder, is for anything more: groups where a game
+sits in only one collection, thresholds, tags, features, reviews, playtime, any advanced
+condition, and keeping games you've filed elsewhere out of a rule.
 
 **Organize as I play** (Settings) decides what happens when Depiled notices you played
 something while it's open:
@@ -231,6 +244,18 @@ something while it's open:
 - *Never*: you press Auto-organize yourself.
 - *Ask me*: a banner offers the changes.
 - *Do it for me*: the changes are made and saved the next time Steam is closed.
+
+## Collection order, colours and names
+
+- **Your own order.** Steam always lists collections alphabetically. Turn on **Keep my own
+  order** in Settings and Depiled puts a number in front of each name in Steam ("01 Playing",
+  "02 Backlog") so they stay in the order you choose. In Depiled you see the plain names, and
+  drag a collection up or down the sidebar (or use **Move up** and **Move down** in its menu).
+  Rules, auto-fill and presets ignore the numbers. Turning it off takes them away again.
+- **Colours** are Depiled's own, for telling collections apart at a glance: sixteen to pick
+  from, or any colour from the colour wheel.
+- **Emoji in names.** Steam shows emoji in collection names. The smiley next to the name field
+  (when making or renaming a collection) opens a searchable set of them.
 
 ## Saving to Steam
 
@@ -263,7 +288,8 @@ computer, so the app works the same with no connection.
 
 | Detail | Comes from | Checked |
 | --- | --- | --- |
-| Achievement progress | your public Steam profile | after you play a game, when an update adds achievements, and otherwise every six to eight months |
+| Achievement progress | your public Steam profile | after you play a game, when an update adds achievements, and otherwise every six to eight months. Games you've never launched show 0 unlocked without asking. |
+| Which games have screenshots | your public Steam profile's screenshots page | weekly |
 | Prices, sales, sale end dates, review counts | the Steam store, for your region | weekly |
 | Time to unlock every achievement | [SteamHunters](https://steamhunters.com) | when Steam reports the game changed, monthly otherwise, and right away for new games |
 | How well it runs on Linux and Steam Deck | [ProtonDB](https://www.protondb.com) | about monthly; settled ratings every three months or so |

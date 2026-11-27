@@ -206,6 +206,19 @@ newest snapshot) with each account's collections in Steam. The ids are random, s
 no accident. Only if nothing matches does it fall back to the account Steam wrote to last,
 which is how older versions chose.
 
+## Collection order
+
+**How do you get Steam to keep an order it sorts alphabetically?**
+
+By the names. With **Keep my own order** on, every collection gets a two-digit number and a
+space in front ("01 Playing"), three digits past 99, renumbered after every edit so there are
+no gaps and new collections join the end. Zero-padding means the order holds whether Steam
+compares names as text or numbers. Everywhere Depiled matches names (rules, auto-fill,
+presets, duplicate checks) it compares them without the number, so "03 Playing" is still
+Playing. The window shows the plain names in number order, and a rename keeps the number.
+Only two or three digits followed by a space count, so a collection called "7 Days to Die"
+is left alone.
+
 ## Watching Steam
 
 **How does Depiled notice you played something?**
