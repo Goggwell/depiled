@@ -19,12 +19,14 @@ jobs:
           - os: windows-latest
             target: i686-pc-windows-msvc
             bundles: nsis
-          - os: macos-latest
-            target: aarch64-apple-darwin
-            bundles: app,dmg
-          - os: macos-latest
-            target: x86_64-apple-darwin
-            bundles: app,dmg
+          # macOS builds are paused until they can be tested on a Mac. The code still supports
+          # macOS (and CI still tests on it); to build installers again, put these back:
+          # - os: macos-latest
+          #   target: aarch64-apple-darwin
+          #   bundles: app,dmg
+          # - os: macos-latest
+          #   target: x86_64-apple-darwin
+          #   bundles: app,dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
