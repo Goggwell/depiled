@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte';
-  import { countTests } from './criteria';
+  import { ACHIEVEMENTS_FEATURE, countTests } from './criteria';
   import { app } from './store.svelte';
   import RuleBuilder from './RuleBuilder.svelte';
   import Icon from './Icon.svelte';
@@ -26,9 +26,18 @@
 
   // Steam lists some things both as a feature and as a player tag ("Co-op", "Single-player").
   // Each is offered once, as a feature; "Steam achievements" is covered by "Has achievements".
-  const ACHIEVEMENTS_FEATURE = 22;
   const squash = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-  const features = $derived((app.library?.flags ?? []).filter((f) => f.id !== ACHIEVEMENTS_FEATURE));
+  // Features some of your games have, most common first, with how many.
+  const features = $derived.by(() => {
+    const count = new Map<number, number>();
+    for (const g of app.library?.games ?? []) for (const c of g.categories) count.set(c, (count.get(c) ?? 0) + 1);
+    return (app.library?.flags ?? [])
+      .filter((f) => f.id !== ACHIEVEMENTS_FEATURE && (count.get(f.id) ?? 0) > 0)
+      .map((f) => ({ ...f, count: count.get(f.id) ?? 0 }))
+      .sort((a, b) => b.count - a.count);
+  });
+  let allFeatures = $state(false);
+  const shownFeatures = $derived(allFeatures ? features : features.filter((f, i) => i < 12 || app.flagFilter.includes(f.id)));
   const featureNames = $derived(new Set(features.map((f) => squash(f.name))));
   const tags = $derived(app.tagChoices.filter((t) => !featureNames.has(squash(t.name))));
   const shownTags = $derived(tags.filter((t) => t.name.toLowerCase().includes(tagQuery.trim().toLowerCase())).slice(0, tagQuery ? 60 : 24));
@@ -166,9 +175,12 @@
       <section class="flex flex-col gap-2">
         <h3 class="text-[13px] font-semibold">Features</h3>
         <div class="flex flex-wrap gap-1.5">
-          {#each features as f (f.id)}
-            <button class="tagbox" aria-pressed={app.flagFilter.includes(f.id)} onclick={() => app.toggleFlag(f.id)}>{pretty(f.name)}</button>
+          {#each shownFeatures as f (f.id)}
+            <button class="tagbox" aria-pressed={app.flagFilter.includes(f.id)} onclick={() => app.toggleFlag(f.id)}>{pretty(f.name)} <span class="tabular-nums opacity-60">{f.count}</span></button>
           {/each}
+          {#if features.length > shownFeatures.length}
+            <button class="link text-xs text-muted hover:text-base-content" onclick={() => (allFeatures = true)}>Show all {features.length}</button>
+          {/if}
         </div>
       </section>
 

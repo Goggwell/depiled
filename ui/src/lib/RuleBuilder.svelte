@@ -6,6 +6,7 @@
   import type { Cond, Test } from './criteria';
   import { app } from './store.svelte';
   import Icon from './Icon.svelte';
+  import ValuePicker from './ValuePicker.svelte';
 
   let { cond, depth = 0, onremove }: { cond: Cond; depth?: number; onremove?: () => void } = $props();
 
@@ -50,13 +51,25 @@
     if (t.field === 'collections') return app.collections.filter((c) => !c.dynamic).map((c) => [c.id, c.name]);
     return [];
   }
+  /** How many games have each value, so the picker can put the common ones first. */
+  function counts(t: Test): Map<string | number, number> | undefined {
+    if (t.field === 'tags') return new Map(app.tagChoices.map((x) => [x.id, x.count]));
+    if (t.field === 'collections') return new Map(app.collections.map((c) => [c.id, c.count]));
+    if (t.field === 'features') {
+      const m = new Map<string | number, number>();
+      for (const g of app.library?.games ?? []) for (const c of g.categories) m.set(c, (m.get(c) ?? 0) + 1);
+      return m;
+    }
+    return undefined;
+  }
   const picked = (t: Test) => (Array.isArray(t.value) ? t.value : []);
   const toggle = (t: Test, v: string | number) => {
     const cur = picked(t);
     t.value = cur.some((x) => x === v) ? cur.filter((x) => x !== v) : [...cur, v];
   };
 
-  const ctl = 'select select-xs h-7 bg-base-100';
+  // Room for the arrow, and long names end in … instead of running under it.
+  const ctl = 'select select-xs h-7 truncate bg-base-100 pr-7';
 </script>
 
 <div class="flex flex-col gap-1.5 {depth ? 'rounded-box border border-base-300 p-2.5' : ''}">
@@ -75,7 +88,7 @@
     {#if 'field' in item}
       {@const f = fieldById(item.field)}
       <div class="flex flex-wrap items-center gap-1.5">
-        <select class="{ctl} w-40" value={item.field} onchange={(e) => setField(item, e.currentTarget.value)} aria-label="Filter">
+        <select class="{ctl} w-52" value={item.field} onchange={(e) => setField(item, e.currentTarget.value)} aria-label="Filter">
           {#each groups as g}<optgroup label={g}>{#each FIELDS.filter((x) => x.group === g) as x}<option value={x.id}>{x.label}</option>{/each}</optgroup>{/each}
         </select>
         {#if f && f.type !== 'bool'}
@@ -104,10 +117,7 @@
             {#each f.options ?? [] as [v, label]}<option value={v}>{label}</option>{/each}
           </select>
         {:else if f && f.type !== 'num'}
-          <select class="{ctl} w-44" value="" onchange={(e) => { const raw = e.currentTarget.value; const o = options(item).find(([v]) => String(v) === raw); if (o) toggle(item, o[0]); e.currentTarget.value = ''; }} aria-label="Add a value">
-            <option value="" disabled>{picked(item).length ? 'Add another…' : 'Choose…'}</option>
-            {#each options(item) as [v, label]}<option value={String(v)}>{label}</option>{/each}
-          </select>
+          <ValuePicker options={options(item)} picked={picked(item)} counts={counts(item)} label="Choose {f.label.toLowerCase()}" onpick={(v) => toggle(item, v)} />
           {#each picked(item) as v}
             <button class="inline-flex h-6 items-center gap-1 rounded-field border border-base-300 px-1.5 text-xs" onclick={() => toggle(item, v as string | number)}>
               {options(item).find(([o]) => o === v)?.[1] ?? v} <Icon name="close" size={10} />

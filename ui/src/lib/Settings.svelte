@@ -20,7 +20,7 @@
 
   type SourceKey = 'online_achievements' | 'online_prices' | 'online_protondb' | 'online_hunters';
   const sources: { key: SourceKey; title: string; text: string }[] = [
-    { key: 'online_achievements', title: 'Achievement progress', text: 'Read from your public Steam profile for each game you’ve played: again after you play it, when an update adds achievements, and every six to eight months.' },
+    { key: 'online_achievements', title: 'Achievement progress and screenshots', text: 'Read from your public Steam profile for each game you’ve played: again after you play it, when an update adds achievements, and every six to eight months. Which games you have screenshots of is checked weekly.' },
     { key: 'online_prices', title: 'Prices, sales and review counts', text: 'From the Steam store for your region, checked weekly.' },
     { key: 'online_protondb', title: 'ProtonDB ratings', text: 'How well each game runs on Linux and Steam Deck. New ratings are checked about monthly. Established ratings are checked less often.' },
     { key: 'online_hunters', title: 'Completion times', text: 'Time to unlock every achievement, from SteamHunters. Checked when Steam reports that a game changed, and monthly otherwise. Also how Depiled notices that an update added achievements to a game you finished.' },
@@ -104,6 +104,14 @@
             </div>
           {/if}
         </section>
+        <section class={section}>
+          <h3 class="font-semibold">Collection order</h3>
+          <label class="mt-2 flex cursor-pointer items-start gap-2.5">
+            <input type="checkbox" class="checkbox checkbox-xs mt-0.5" checked={app.ordered} disabled={app.busy || app.saving} onchange={(e) => app.setOrdering(e.currentTarget.checked)} />
+            <span>Keep my own order<span class="block text-muted">Steam always lists collections alphabetically, so Depiled puts a number in front of each name in Steam (01 Playing, 02 Backlog). In Depiled you see the plain names and drag them into the order you like. Turning this off takes the numbers away again. Either way it reaches Steam when you save.</span></span>
+          </label>
+        </section>
+
         <section class={section}>
           <h3 class="mb-2 font-semibold">Appearance</h3>
           <div class="seg" role="group" aria-label="Appearance">

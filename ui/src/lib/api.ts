@@ -103,6 +103,8 @@ export interface Game {
   installed_bytes: number;
   /** Lent by someone in the user's Steam Family. */
   family: boolean;
+  /** Has screenshots, taken on this computer or uploaded to the profile. */
+  screenshots: boolean;
   store: StoreInfo | null;
   /** ProtonDB tier: platinum, gold, silver, bronze or borked. */
   proton: string | null;
@@ -135,6 +137,8 @@ export interface Library {
   flags: { id: number; name: string }[];
   draft: DraftState;
   online: OnlineState;
+  /** The user keeps their own collection order, with numbers in front of the names in Steam. */
+  ordered: boolean;
 }
 
 /** What an edit changed: the collections, the draft, and the games that moved. */
@@ -160,7 +164,31 @@ export interface SmartRule {
   tags: number[];
   /** Further conditions with AND, OR and NOT. */
   condition?: Cond | null;
+  /** Also take games out when they stop matching. */
+  sync?: boolean;
 }
+
+/** A ready-made set of collections that fill themselves. */
+export interface Preset {
+  id: string;
+  name: string;
+  description: string;
+  collections: { name: string; rule: SmartRule }[];
+}
+
+export interface PresetResult {
+  patch: Patch;
+  created: string[];
+  attached: string[];
+  kept: string[];
+}
+
+export const setOrdering = (on: boolean) => call<Patch>('set_ordering', { on });
+/** Puts the collections in this order, by id. */
+export const setOrder = (ids: string[]) => call<Patch>('set_order', { ids });
+
+export const presets = () => call<Preset[]>('presets');
+export const applyPreset = (id: string) => call<PresetResult>('apply_preset', { id });
 
 export type Automation = 'off' | 'notify' | 'auto';
 

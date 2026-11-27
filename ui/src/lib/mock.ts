@@ -12,8 +12,8 @@ const TAGS: Record<string, string> = {
   '1742': 'Story Rich', '3942': 'Cozy', '1664': 'Puzzle', '1685': 'Co-op', '4182': 'Singleplayer', '5395': '3D Platformer', '1695': 'Open World',
 };
 const FLAGS = [
-  { id: 2, name: 'single-player' }, { id: 1, name: 'multi-player' }, { id: 9, name: 'co-op' },
-  { id: 23, name: 'steam cloud' }, { id: 28, name: 'full controller support' }, { id: 22, name: 'steam achievements' },
+  { id: 2, name: 'Single-player' }, { id: 1, name: 'Multi-player' }, { id: 9, name: 'Co-op' },
+  { id: 23, name: 'Steam Cloud' }, { id: 28, name: 'Full controller support' }, { id: 22, name: 'Steam Achievements' }, { id: 29, name: 'Steam Trading Cards' },
 ];
 
 let seed = 7;
@@ -75,6 +75,7 @@ const games: Game[] = Array.from({ length: COUNT }, (_, i) => {
     extras: { deck: Math.floor(rnd() * 4), controller: Math.floor(rnd() * 3), platforms: 1 | (rnd() < 0.3 ? 4 : 0) | (rnd() < 0.2 ? 2 : 0), vr: rnd() < 0.05, early_access: rnd() < 0.08 },
     installed_bytes: rnd() < 0.15 ? Math.floor(rnd() * 60e9) : 0,
     family: i % 41 === 9,
+    screenshots: i % 5 === 0,
     store: demoStore(i),
     proton: rnd() < 0.7 ? pick(['platinum', 'gold', 'silver', 'bronze', 'borked']) : null,
     cover: i % 23 === 5 ? null : demoCover(i),
@@ -182,6 +183,7 @@ function library(): Library {
     tags: TAGS,
     flags: FLAGS,
     draft: draftState(),
+    ordered: false,
     online: { country: 'US', detected_region: 'US', profile_private: false, achievements_read: 42, usage: { month: '2026-11', month_requests: 951, month_bytes: 26e6, total_requests: 951, total_bytes: 26e6, last_run: now }, cached_regions: ['US'], sources: [{ key: 'online_achievements', label: 'Achievement progress', updated: now - 3600, items: 42 }, { key: 'online_prices', label: 'Prices and reviews', updated: now - 7200, items: 120 }, { key: 'online_hunters', label: 'Completion times', updated: now - 86400 * 3, items: 80 }, { key: 'online_protondb', label: 'ProtonDB ratings', updated: now - 86400 * 9, items: 90 }] },
   };
 }
@@ -395,6 +397,36 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
     case 'stop_online':
       stopRequested = true;
       return r(undefined);
+    case 'set_ordering':
+      return r(edit('order', () => null));
+    case 'set_order': {
+      const ids: string[] = args.ids;
+      return r(edit('reorder collections', () => {
+        const at = (c: Col) => (ids.includes(c.id) ? ids.indexOf(c.id) : ids.length);
+        draft.sort((a, b) => at(a) - at(b));
+        return null;
+      }));
+    }
+    case 'presets': {
+      const t = (field: string, op: string, value: unknown) => ({ field, op, value });
+      const rule = (...all: unknown[]) => ({ played: null, achievements: null, min_review: 0, flags: [], tags: [], condition: { all }, sync: true });
+      return r([
+        { id: 'achievements', name: 'Achievement hunting', description: 'Games with achievements, by how far you’ve got.', collections: [
+          { name: 'Completed', rule: rule(t('completed', 'is', true)) },
+          { name: 'In progress', rule: rule(t('has_achievements', 'is', true), t('achievements_unlocked', 'gt', 0), t('completed', 'is', false)) },
+          { name: 'Haven’t started', rule: rule(t('has_achievements', 'is', true), t('achievements_unlocked', 'eq', 0)) },
+        ] },
+        { id: 'deck', name: 'Steam Deck', description: 'Valve’s Steam Deck rating for each game.', collections: [
+          { name: 'Deck Verified', rule: rule(t('deck', 'is', 'verified')) },
+          { name: 'Deck Playable', rule: rule(t('deck', 'is', 'playable')) },
+        ] },
+      ]);
+    }
+    case 'apply_preset': {
+      const made = ['In progress', 'Haven’t started'].filter((n) => !draft.some((c) => c.name === n));
+      const p = edit('preset', () => { for (const name of made) draft.push({ id: newId(), name, apps: [], dynamic: false }); return null; });
+      return r({ patch: p, created: made, attached: [], kept: ['Completed'] });
+    }
     case 'crash_mode':
       // ?crash in the demo's address shows the crash window.
       return r(new URLSearchParams(location.search).has('crash') ? sampleCrash() : null);

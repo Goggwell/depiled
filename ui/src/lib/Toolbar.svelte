@@ -3,9 +3,9 @@
   import { countTests } from './criteria';
   import { describeCond } from './describe';
   import { app, saveLayout } from './store.svelte';
-  import type { SortKey } from './columns';
   import FilterPanel from './FilterPanel.svelte';
   import Icon from './Icon.svelte';
+  import SortMenu from './SortMenu.svelte';
 
   let open = $state(false);
   // Built the first time it opens, then only hidden, so reopening doesn't rebuild every tag.
@@ -43,20 +43,6 @@
     else typing = setTimeout(() => (app.search = value), 150);
   }
 
-  const sorts: [SortKey, string][] = [
-    ['name', 'Name'],
-    ['last', 'Recently played'],
-    ['played', 'Most played'],
-    ['reviews', 'Best reviewed'],
-    ['metacritic', 'Metacritic'],
-    ['release', 'Release date'],
-    ['perfect', 'Time to 100%'],
-    ['size', 'Size on disk'],
-    ['developer', 'Developer'],
-    ['price', 'Price'],
-    ['discount', 'Biggest sale'],
-    ['reviewCount', 'Most reviewed'],
-  ];
   const deckNames = ['Unknown on Deck', 'Deck unsupported', 'Deck playable', 'Deck verified'];
   const platformNames = (bits: number) => [['Windows', 1], ['macOS', 2], ['Linux', 4]].filter(([, b]) => bits & (b as number)).map(([n]) => n).join(' and ');
   const choiceText = { installed: ['Installed', 'Not installed'], vr: ['VR', 'No VR'], earlyAccess: ['Early access', 'Not early access'], hasAchievements: ['Has achievements', 'No achievements'], family: ['Family games', 'Not family games'] } as const;
@@ -166,15 +152,7 @@
       {/if}
     </div>
 
-    <div class="join">
-      <select class="select join-item select-sm h-8 w-40 bg-base-100" value={app.sort} onchange={(e) => app.setSort(e.currentTarget.value as SortKey)} aria-label="Sort by">
-        {#each sorts as [v, label]}<option value={v}>{label}</option>{/each}
-        {#if !sorts.some(([v]) => v === app.sort)}<option value={app.sort}>The column you picked</option>{/if}
-      </select>
-      <button class="btn join-item btn-sm btn-square h-8 border-base-300 bg-base-100" onclick={() => (app.sortDesc = !app.sortDesc)} aria-label={app.sortDesc ? 'Descending' : 'Ascending'} title={app.sortDesc ? 'Highest first' : 'Lowest first'}>
-        <span class="inline-block transition-transform {app.sortDesc ? '' : 'rotate-180'}"><Icon name="caret" size={14} /></span>
-      </button>
-    </div>
+    <SortMenu />
 
     <div class="seg ml-auto" role="group" aria-label="Show as">
       {#each layouts as [v, icon, label]}

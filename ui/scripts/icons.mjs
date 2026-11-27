@@ -20,7 +20,7 @@ const ICONS = {
   inbox: ['Tray'],
   plus: ['Plus'],
   close: ['X'],
-  check: ['Check'],
+  check: ['Check', 'bold'],
   done: ['CheckCircle', 'fill'],
   lock: ['Lock'],
   dots: ['DotsThree', 'bold'],
@@ -43,6 +43,9 @@ const ICONS = {
   heart: ['Heart'],
   family: ['UsersThree', 'bold'],
   feedback: ['ChatCircleText'],
+  sort: ['ArrowsDownUp'],
+  up: ['ArrowUp'],
+  down: ['ArrowDown'],
 };
 
 const lib = new URL('../node_modules/phosphor-svelte/lib/', import.meta.url);

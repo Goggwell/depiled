@@ -99,6 +99,9 @@
     <p class="rounded-[4px] bg-error/10 p-3 text-[13px]"><strong class="font-semibold">Couldn’t read your collections.</strong> {error} Close this and try again; if it keeps happening, restart Depiled.</p>
   {:else if ops.length === 0}
     <p class="py-2">Nothing to change. Your library already matches.</p>
+    {#if !Object.keys(app.smartRules).length}
+      <p class="text-[13px] text-muted">None of your collections fill themselves yet. Give one criteria with Auto-fill in its menu, or start from a preset.</p>
+    {/if}
   {:else}
     <ul class="divide-y divide-base-300 rounded-box border border-base-300">
       {#each ops as o}
@@ -118,10 +121,11 @@
 {#if app.dialog === 'organize'}
   {#snippet body()}{@render opList()}{/snippet}
   {#snippet actions()}
+    <button class="btn btn-ghost btn-sm mr-auto" onclick={() => (app.dialog = 'presets')}><Icon name="wand" size={15} /> Presets…</button>
     <button class="btn btn-ghost btn-sm" onclick={close}>Close</button>
     <button class="btn btn-primary btn-sm" disabled={loading || !!error || ops.length === 0} onclick={organize}>{moved ? `Move ${moved.toLocaleString()} ${moved === 1 ? 'game' : 'games'}` : 'Apply'}</button>
   {/snippet}
-  {@render shell('Auto-organize', 'Auto-organize', 'Your rules sort games by how you’ve played them: finished games into Completed, ones you stopped playing into Unfinished, and so on. This is what they would change. Nothing goes to Steam until you save.', body, actions)}
+  {@render shell('Auto-organize', 'Auto-organize', 'Tops up your collections that fill themselves, and runs your rules for the collections you have. It never makes new collections; for a ready-made set, pick a preset. This is what would change. Nothing goes to Steam until you save.', body, actions)}
 {:else if app.dialog === 'save'}
   {#snippet body()}
     {@render opList()}

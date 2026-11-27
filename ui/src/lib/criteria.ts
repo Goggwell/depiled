@@ -19,7 +19,7 @@ export type FieldId =
   | 'playtime_hours' | 'last_played_days' | 'release_year' | 'review_percent' | 'review_count' | 'metacritic'
   | 'achievements' | 'achievements_unlocked' | 'achievement_percent' | 'perfect_hours' | 'price' | 'discount' | 'size_gb'
   | 'played' | 'deck' | 'proton'
-  | 'installed' | 'vr' | 'early_access' | 'family' | 'on_sale' | 'completed'
+  | 'installed' | 'vr' | 'early_access' | 'family' | 'on_sale' | 'completed' | 'has_achievements' | 'has_screenshots'
   | 'tags' | 'features' | 'platforms' | 'collections';
 
 export type FieldType = 'text' | 'num' | 'choice' | 'bool' | 'set';
@@ -45,6 +45,8 @@ export const FIELDS: Field[] = [
   { id: 'played', label: 'Play status', type: 'choice', group: 'Playing', options: [['never', 'Never played'], ['played', 'Played']] },
   { id: 'playtime_hours', label: 'Time played', type: 'num', unit: 'h', group: 'Playing' },
   { id: 'last_played_days', label: 'Last played', type: 'num', unit: 'ago', group: 'Playing' },
+  { id: 'has_screenshots', label: 'Has screenshots', type: 'bool', group: 'Playing' },
+  { id: 'has_achievements', label: 'Has achievements', type: 'bool', group: 'Achievements' },
   { id: 'achievements', label: 'Number of achievements', type: 'num', group: 'Achievements' },
   { id: 'achievements_unlocked', label: 'Achievements unlocked', type: 'num', group: 'Achievements' },
   { id: 'achievement_percent', label: 'Achievements unlocked (%)', type: 'num', unit: '%', group: 'Achievements' },
@@ -152,6 +154,9 @@ const DECK = ['unknown', 'unsupported', 'playable', 'verified'];
 const PLATFORMS: [string, number][] = [['windows', 1], ['mac', 2], ['linux', 4]];
 
 /** Each field's value for a game. Unknown numbers are null. */
+/** Steam's "Steam Achievements" feature. */
+export const ACHIEVEMENTS_FEATURE = 22;
+
 const READ: { [K in FieldId]: (g: Game, now: number) => unknown } = {
   name: (g) => [g.name],
   developer: (g) => g.developers,
@@ -180,6 +185,8 @@ const READ: { [K in FieldId]: (g: Game, now: number) => unknown } = {
   early_access: (g) => g.extras.early_access,
   family: (g) => g.family,
   on_sale: (g) => (g.store?.discount ?? 0) > 0,
+  has_screenshots: (g) => g.screenshots,
+  has_achievements: (g) => total(g) > 0 || g.categories.includes(ACHIEVEMENTS_FEATURE),
   completed: (g) => {
     const a = progress(g);
     return !!a && a.unlocked >= Math.max(a.total, total(g));

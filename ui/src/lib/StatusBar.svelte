@@ -20,8 +20,10 @@
   {:else if !app.library}
     <span class="text-muted">Reading your library…</span>
   {:else if n}
-    <span class="rounded-[3px] bg-accent px-1.5 text-xs font-bold leading-5 text-accent-content tabular-nums">{n}</span>
-    <span class="truncate"><strong class="font-semibold">{n === 1 ? 'change' : 'changes'}</strong> not in Steam yet</span>
+    <span class="flex min-w-0 items-center gap-1.5">
+      <span class="rounded-[3px] bg-accent px-1.5 text-xs font-bold leading-5 text-accent-content tabular-nums">{n}</span>
+      <span class="truncate"><strong class="font-semibold">{n === 1 ? 'change' : 'changes'}</strong> not in Steam yet</span>
+    </span>
     {#if app.draft.rebased}<span class="truncate text-muted">Steam changed meanwhile; both are kept.</span>{/if}
   {:else if app.lastSaved}
     <span class="text-success"><Icon name="done" size={15} weight="fill" /></span>

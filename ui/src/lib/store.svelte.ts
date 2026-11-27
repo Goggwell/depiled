@@ -9,7 +9,7 @@ export type PlayedFilter = 'any' | 'never' | 'played' | 'idle';
 export type AchFilter = 'any' | 'complete' | 'incomplete';
 export type Choice = 'any' | 'yes' | 'no';
 /** 'new' creates a collection; 'rule' edits the auto-fill criteria of `ruleFor`. */
-export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings' | 'save' | 'merge' | 'feedback';
+export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings' | 'save' | 'merge' | 'feedback' | 'presets';
 export type Theme = 'system' | 'light' | 'dark';
 
 const THEME_KEY = 'depiled-theme';
@@ -47,15 +47,25 @@ const THEME_NAMES = { light: 'shelf-day', dark: 'shelf-night' } as const;
 
 /** Colours offered for collections. Picked to read well on both themes and on cover art, and
  *  kept clear of amber, which means unsaved changes. */
+/** Collection colours, in rainbow order. No amber or yellow: amber means unsaved changes. Any
+ *  other colour can be picked with the custom one. */
 export const COLORS: { name: string; value: string }[] = [
   { name: 'Red', value: '#e5484d' },
-  { name: 'Lime', value: '#86b31a' },
-  { name: 'Moss', value: '#46a758' },
-  { name: 'Teal', value: '#12a594' },
-  { name: 'Sky', value: '#0090ff' },
-  { name: 'Indigo', value: '#5b5bd6' },
-  { name: 'Violet', value: '#8e4ec6' },
+  { name: 'Crimson', value: '#e93d82' },
   { name: 'Pink', value: '#d6409f' },
+  { name: 'Plum', value: '#ab4aba' },
+  { name: 'Violet', value: '#8e4ec6' },
+  { name: 'Indigo', value: '#5b5bd6' },
+  { name: 'Sky', value: '#0090ff' },
+  { name: 'Cyan', value: '#00a2c7' },
+  { name: 'Teal', value: '#12a594' },
+  { name: 'Mint', value: '#3fb68b' },
+  { name: 'Moss', value: '#46a758' },
+  { name: 'Lime', value: '#86b31a' },
+  { name: 'Olive', value: '#7d8b4e' },
+  { name: 'Brown', value: '#ad7f58' },
+  { name: 'Bronze', value: '#a18072' },
+  { name: 'Slate', value: '#7d8596' },
 ];
 /** Other things in the library besides games, each with its own place in the sidebar. */
 export const OTHER_KINDS: { kind: Kind; label: string }[] = [
@@ -161,7 +171,7 @@ class AppStore {
     yesNo('early_access', this.earlyAccess);
     yesNo('family', this.family);
     yesNo('on_sale', this.onSale);
-    if (this.hasAchievements !== 'any') out.push(this.hasAchievements === 'yes' ? { field: 'achievements', op: 'gt', value: 0 } : { not: { field: 'achievements', op: 'gt', value: 0 } });
+    if (this.hasAchievements !== 'any') out.push({ field: 'has_achievements', op: 'is', value: this.hasAchievements === 'yes' });
     if (this.maxPerfectHours) out.push({ field: 'perfect_hours', op: 'lte', value: this.maxPerfectHours });
     if (this.deck.length) out.push({ field: 'deck', op: 'in', value: this.deck.map((d) => ['unknown', 'unsupported', 'playable', 'verified'][d]) });
     if (this.platforms) out.push({ field: 'platforms', op: 'has_all', value: [['windows', 1], ['mac', 2], ['linux', 4]].filter(([, b]) => this.platforms & (b as number)).map(([n]) => n) });
@@ -203,6 +213,8 @@ class AppStore {
   feedbackSeed = $state<string | null>(null);
   /** The last error messages shown or thrown, for bug reports. Not reactive: read on demand. */
   recentErrors: string[] = [];
+  /** The user keeps their own collection order. */
+  ordered = $state(false);
   /** The Steam accounts on this computer and which one is shown. */
   accounts = $state.raw<api.Accounts | null>(null);
   currentAccount = $derived(this.accounts?.accounts.find((a) => a.id === this.accounts?.current) ?? null);
@@ -414,6 +426,7 @@ class AppStore {
 
   private setLibrary(lib: Library) {
     this.library = lib;
+    this.ordered = lib.ordered;
     this.draft = lib.draft;
     const ids = new Set(lib.games.map((g) => g.appid));
     this.selected = this.selected.filter((id) => ids.has(id));
@@ -763,6 +776,29 @@ class AppStore {
     return p?.value ?? null;
   }
 
+  async setOrdering(on: boolean) {
+    const p = await this.edit(() => api.setOrdering(on), () => (on ? 'Numbered your collections. Drag them in the sidebar to reorder.' : 'Took the numbers off your collections.'));
+    if (p) this.ordered = on;
+  }
+
+  /** Moves a collection to just before another (or to the end with null). */
+  moveCollection(id: string, before: string | null) {
+    const ids = this.collections.filter((c) => !c.dynamic && c.id !== id).map((c) => c.id);
+    const at = before ? ids.indexOf(before) : -1;
+    ids.splice(at < 0 ? ids.length : at, 0, id);
+    return this.edit(() => api.setOrder(ids), () => null);
+  }
+
+  /** Moves a collection one place up or down. */
+  nudgeCollection(id: string, by: -1 | 1) {
+    const ids = this.collections.filter((c) => !c.dynamic).map((c) => c.id);
+    const i = ids.indexOf(id);
+    const j = i + by;
+    if (i < 0 || j < 0 || j >= ids.length) return;
+    [ids[i], ids[j]] = [ids[j], ids[i]];
+    return this.edit(() => api.setOrder(ids), () => null);
+  }
+
   renameCollection(id: string, name: string) {
     return this.edit(() => api.renameCollection(id, name), () => `Renamed to ${name.trim()}`);
   }
@@ -901,6 +937,30 @@ class AppStore {
   }
 
   // ---- toasts ------------------------------------------------------------------------
+
+  // ---- presets -----------------------------------------------------------------------
+
+  /** Sets up a preset's collections. True when it worked. */
+  async applyPreset(id: string): Promise<boolean> {
+    this.busy = true;
+    try {
+      const r = await api.applyPreset(id);
+      this.applyPatch(r.patch);
+      this.smartRules = await api.smartRules().catch(() => this.smartRules);
+      const list = (names: string[]) => (names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0]);
+      const parts: string[] = [];
+      if (r.created.length) parts.push(`Made ${list(r.created)}`);
+      if (r.attached.length) parts.push(`${list(r.attached)} now ${r.attached.length === 1 ? 'fills' : 'fill'} itself`);
+      if (r.kept.length) parts.push(`${list(r.kept)} kept ${r.kept.length === 1 ? 'its' : 'their'} own criteria`);
+      this.say(parts.length ? parts.join('. ') + '.' : 'You already have all of these.', parts.length > 0);
+      return true;
+    } catch (e) {
+      this.fail(e);
+      return false;
+    } finally {
+      this.busy = false;
+    }
+  }
 
   // ---- feedback ----------------------------------------------------------------------
 

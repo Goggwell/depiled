@@ -1,6 +1,7 @@
 <script lang="ts">
   import { app } from './store.svelte';
   import { ruleIsEmpty } from './criteria';
+  import EmojiPicker from './EmojiPicker.svelte';
   import FilterPanel from './FilterPanel.svelte';
 
   type Kind = 'empty' | 'selected' | 'auto';
@@ -10,6 +11,7 @@
   const hasRule = $derived(!!(app.ruleFor && app.smartRules[app.ruleFor]));
 
   let name = $state('');
+  let nameInput = $state<HTMLInputElement>();
   let kind = $state<Kind>('empty');
   let remember = $state(true);
   let wasOpen = false;
@@ -87,7 +89,10 @@
         <div class="min-h-0 flex-1 overflow-y-auto px-6 pb-4">
           <label for="new-name" class="mb-1.5 block text-[13px] font-semibold">Name</label>
           <!-- svelte-ignore a11y_autofocus -->
-          <input id="new-name" type="text" class="input w-full" placeholder="For example Scary nights" bind:value={name} autofocus onkeydown={(e) => e.key === 'Enter' && canCreate && create()} />
+          <div class="flex items-center gap-1">
+            <input id="new-name" type="text" class="input w-full" placeholder="For example Scary nights" bind:value={name} bind:this={nameInput} autofocus onkeydown={(e) => e.key === 'Enter' && canCreate && create()} />
+            <EmojiPicker target={nameInput} onpick={(v) => (name = v)} />
+          </div>
           {#if nameTaken}<p class="mt-1.5 text-[13px] text-error">You already have a collection with this name.</p>{/if}
 
           <div class="mt-4 flex flex-col divide-y divide-base-300 rounded-box border border-base-300" role="radiogroup" aria-label="How to fill it">

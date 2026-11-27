@@ -5,6 +5,7 @@
   import AutomationBanner from './lib/AutomationBanner.svelte';
   import CrashReport from './lib/CrashReport.svelte';
   import Feedback from './lib/Feedback.svelte';
+  import Presets from './lib/Presets.svelte';
   import CollectionBar from './lib/CollectionBar.svelte';
   import Details from './lib/Details.svelte';
   import Dialogs from './lib/Dialogs.svelte';
@@ -48,6 +49,7 @@
   <NewCollection />
   <Settings />
   <Feedback />
+  <Presets />
   {#if app.crash}
     <div class="modal modal-open" role="dialog" aria-label="Depiled closed unexpectedly">
       <div class="modal-box max-w-lg rounded-box p-0"><CrashReport crash={app.crash} /></div>
@@ -65,12 +67,12 @@
       {#if app.toast.error}<Icon name="warning" size={16} />{/if}
       <span class="max-w-md">{app.toast.text}</span>
       {#if app.toast.error}
-        <button class="btn btn-sm btn-ghost text-inherit" onclick={() => app.openFeedback(`I saw this error: ${app.toast?.text}\n\nWhat I was doing: `)}>Report</button>
+        <button class="btn btn-sm border-0 bg-current/15 text-inherit shadow-none hover:bg-current/25" onclick={() => app.openFeedback(`I saw this error: ${app.toast?.text}\n\nWhat I was doing: `)}>Report</button>
       {/if}
       {#if app.toast.undo && app.draft.undo}
-        <button class="btn btn-sm btn-ghost text-inherit" onclick={() => app.undo()}>Undo</button>
+        <button class="btn btn-sm border-0 bg-current/15 text-inherit shadow-none hover:bg-current/25" onclick={() => app.undo()}>Undo</button>
       {/if}
-      <button class="btn btn-ghost btn-sm btn-square text-inherit" aria-label="Dismiss" onclick={() => (app.toast = null)}><Icon name="close" size={14} /></button>
+      <button class="btn btn-sm btn-square border-0 bg-current/15 text-inherit shadow-none hover:bg-current/25" aria-label="Dismiss" onclick={() => (app.toast = null)}><Icon name="close" size={14} /></button>
     </div>
   </div>
 {/if}

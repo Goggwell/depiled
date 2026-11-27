@@ -2,12 +2,15 @@
   import { coverUrl } from './api';
   import { app, fmtAgo, fmtHours, fmtSize, fmtSpan, fmtYear, NO_COLOR } from './store.svelte';
   import Icon from './Icon.svelte';
+  import { ACHIEVEMENTS_FEATURE } from './criteria';
 
   const game = $derived(app.selectedGames.length === 1 ? app.selectedGames[0] : null);
   const ach = $derived(game?.achievements);
   const hunt = $derived(game?.hunters && game.hunters.median_minutes > 0 ? game.hunters : null);
   const editable = $derived(app.collections.filter((c) => !c.dynamic));
   const topTags = $derived(game ? game.tags.slice(0, 10) : []);
+  // Steam's store features, in the order Steam lists them, apart from player tags.
+  const features = $derived(game ? (app.library?.flags ?? []).filter((f) => game.categories.includes(f.id)) : []);
 
   let target = $state('');
   async function addMany() {
@@ -77,6 +80,7 @@
       {@render fact('Steam Deck', DECK[game.extras.deck])}
       {@render fact('Runs on', platforms(game.extras.platforms))}
       {@render fact('On disk', game.installed_bytes ? fmtSize(game.installed_bytes) : 'Not installed')}
+      {@render fact('Screenshots', game.screenshots ? 'Yes' : 'None found')}
       {#if game.proton}{@render fact('ProtonDB', game.proton.charAt(0).toUpperCase() + game.proton.slice(1))}{/if}
     </dl>
 
@@ -107,6 +111,8 @@
         </div>
       {:else if hunt}
         <p class="text-[13px] text-muted">{hunt.achievements} achievements. {app.settings.online_stats && app.settings.online_achievements ? 'Your progress is read from your Steam profile once you’ve played it.' : 'Turn on achievement progress in Settings to see yours.'}</p>
+      {:else if !game.categories.includes(ACHIEVEMENTS_FEATURE)}
+        <p class="text-[13px] text-muted">This game has no achievements.</p>
       {:else}
         <p class="text-[13px] text-muted">Steam hasn’t saved achievement progress for this game on this computer.</p>
       {/if}
@@ -121,9 +127,20 @@
       {/if}
     </section>
 
+    {#if features.length}
+      <section class="border-t border-base-300 px-5 py-4">
+        <h3 class="mb-2 text-[13px] font-semibold">Features</h3>
+        <div class="flex flex-wrap gap-1.5">
+          {#each features as f (f.id)}
+            <button class="h-6 rounded-field border px-2 text-xs {app.flagFilter.includes(f.id) ? 'border-primary bg-primary text-primary-content' : 'border-base-300 hover:border-base-content/30'}" onclick={() => app.toggleFlag(f.id)} title="Show only games with this feature">{f.name}</button>
+          {/each}
+        </div>
+      </section>
+    {/if}
+
     {#if topTags.length}
       <section class="border-t border-base-300 px-5 py-4">
-        <h3 class="mb-2 text-[13px] font-semibold">Tags</h3>
+        <h3 class="mb-2 text-[13px] font-semibold">Genres and tags</h3>
         <div class="flex flex-wrap gap-1.5">
           {#each topTags as t (t)}
             <button class="h-6 rounded-field border px-2 text-xs {app.tagFilter.includes(t) ? 'border-primary bg-primary text-primary-content' : 'border-base-300 hover:border-base-content/30'}" onclick={() => app.toggleTag(t)} title="Show only games with this tag">{app.tagNames[t] ?? t}</button>

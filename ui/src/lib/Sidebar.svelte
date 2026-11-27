@@ -3,17 +3,47 @@
   import type { Collection } from './api';
   import { app, COLORS, NO_COLOR, OTHER_KINDS } from './store.svelte';
   import AccountSwitcher from './AccountSwitcher.svelte';
+  import EmojiPicker from './EmojiPicker.svelte';
   import Icon from './Icon.svelte';
 
   let dropTarget = $state<string | null>(null);
+  // Reordering by dragging, when the user keeps their own order: which collection is being
+  // dragged, and where the line shows (before a collection, or at the end).
+  let dragging = $state<string | null>(null);
+  let insertAt = $state<{ before: string | null } | null>(null);
+  const userCollections = $derived(app.collections.filter((c) => !c.dynamic));
+
+  function reorderOver(e: DragEvent, id: string) {
+    if (!dragging || !e.dataTransfer?.types.includes('application/x-collection')) return false;
+    e.preventDefault();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const lower = e.clientY > r.top + r.height / 2;
+    const i = userCollections.findIndex((c) => c.id === id);
+    insertAt = { before: lower ? (userCollections[i + 1]?.id ?? null) : id };
+    return true;
+  }
+  function reorderDrop(e: DragEvent) {
+    if (!dragging || !insertAt) return false;
+    e.preventDefault();
+    const { before } = insertAt;
+    const id = dragging;
+    dragging = null;
+    insertAt = null;
+    if (before !== id) app.moveCollection(id, before);
+    return true;
+  }
   let renaming = $state<string | null>(null);
   let renameValue = $state('');
+  let renameInput = $state<HTMLInputElement>();
+  let renameBox = $state<HTMLSpanElement>();
   let confirmDelete = $state<string | null>(null);
   /** Collection whose menu is open, and where. */
   let menu = $state<{ id: string; x: number; y: number } | null>(null);
 
   const total = $derived(app.gameCount);
   const menuFor = $derived(menu ? app.collections.find((c) => c.id === menu!.id) : undefined);
+  /** A colour picked with the colour wheel rather than from the swatches. */
+  const customColor = $derived(menuFor?.color && !COLORS.some((c) => c.value === menuFor.color) ? menuFor.color : null);
 
   function over(e: DragEvent, id: string) {
     if (!e.dataTransfer?.types.includes('application/x-games')) return;
@@ -113,32 +143,49 @@
 
     <div class="mt-4 flex items-center justify-between pb-1 pl-2 pr-1">
       <span class="text-xs font-semibold text-muted">Collections</span>
-      <button class="btn btn-ghost btn-xs btn-square" aria-label="New collection" title="New collection" onclick={() => app.openNewCollection()}><Icon name="plus" size={14} /></button>
+      <span class="flex">
+        <button class="btn btn-ghost btn-xs btn-square" aria-label="Start from a preset" title="Start from a preset" onclick={() => (app.dialog = 'presets')}><Icon name="wand" size={14} /></button>
+        <button class="btn btn-ghost btn-xs btn-square" aria-label="New collection" title="New collection" onclick={() => app.openNewCollection()}><Icon name="plus" size={14} /></button>
+      </span>
     </div>
 
     {#each app.collections as c (c.id)}
+      {#if insertAt && insertAt.before === c.id}<div class="mx-2 h-0.5 rounded-full bg-base-content" aria-hidden="true"></div>{/if}
       <div
-        class="{row} {active(app.view === c.id)} {dropTarget === c.id ? 'bg-base-200 ring-2 ring-inset' : ''}"
+        class="{row} {active(app.view === c.id)} {dropTarget === c.id ? 'bg-base-200 ring-2 ring-inset' : ''} {dragging === c.id ? 'opacity-50' : ''}"
         style={dropTarget === c.id ? `--tw-ring-color:${c.color ?? 'var(--color-base-content)'}` : ''}
         role="listitem"
-        ondragover={(e) => !c.dynamic && over(e, c.id)}
+        draggable={app.ordered && !c.dynamic && renaming !== c.id}
+        ondragstart={(e) => {
+          if (!app.ordered || c.dynamic) return;
+          dragging = c.id;
+          e.dataTransfer?.setData('application/x-collection', c.id);
+          if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move';
+        }}
+        ondragend={() => ((dragging = null), (insertAt = null))}
+        ondragover={(e) => !c.dynamic && !reorderOver(e, c.id) && over(e, c.id)}
         ondragleave={() => (dropTarget = null)}
-        ondrop={(e) => !c.dynamic && drop(e, c.id)}
+        ondrop={(e) => !c.dynamic && !reorderDrop(e) && drop(e, c.id)}
         oncontextmenu={(e) => openMenu(e, c)}
       >
         <span class="spine" style="background:{c.color ?? NO_COLOR};opacity:{c.color ? 1 : 0.35}"></span>
         {#if renaming === c.id}
+          <!-- Picking an emoji moves focus into the picker; that isn't the end of renaming. -->
+          <span class="flex min-w-0 flex-1 items-center" bind:this={renameBox}>
           <input
             type="text"
             class="input input-xs h-6 min-w-0 flex-1"
             bind:value={renameValue}
+            bind:this={renameInput}
             use:focus
-            onblur={commitRename}
+            onblur={(e) => !renameBox?.contains(e.relatedTarget as Node) && commitRename()}
             onkeydown={(e) => {
               if (e.key === 'Enter') commitRename();
               if (e.key === 'Escape') renaming = null;
             }}
           />
+          <EmojiPicker target={renameInput} onpick={(v) => (renameValue = v)} />
+          </span>
         {:else}
           <button
             class="flex h-full min-w-0 flex-1 items-center gap-1.5 text-left"
@@ -158,6 +205,7 @@
         {/if}
       </div>
     {/each}
+    {#if insertAt && insertAt.before === null}<div class="mx-2 h-0.5 rounded-full bg-base-content" aria-hidden="true"></div>{/if}
   </nav>
 
   <div class="border-t border-base-300 p-3 text-xs leading-relaxed text-muted">Drag games onto a collection to add them. Hold Shift to move them out of the one you’re in.</div>
@@ -176,19 +224,38 @@
     onkeydown={menuKeys}
   >
     <p class="px-2 pb-1 pt-1 text-xs text-muted">Colour</p>
-    <div class="grid grid-cols-9 gap-1 px-1.5 pb-2" role="group" aria-label="Colour">
-      {#each COLORS as col}
+    <!-- The colour in use has a tick in it; nothing is drawn around it, so swatches never
+         overlap. The last two are any colour (a colour wheel) and no colour. -->
+    <div class="grid grid-cols-6 gap-1.5 px-2 pb-2" role="group" aria-label="Colour">
+      {#each COLORS as col (col.value)}
         <button
           role="menuitem"
-          class="size-6 rounded-[4px] ring-offset-2 ring-offset-base-100 {menuFor.color === col.value ? 'ring-2 ring-base-content' : ''}"
+          class="grid size-7 place-items-center rounded-[5px] text-white transition-transform hover:scale-110 focus-visible:scale-110 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-base-content"
           style="background:{col.value}"
           aria-label={col.name}
           aria-current={menuFor.color === col.value}
           title={col.name}
           onclick={() => act(() => app.setColor(menuFor.id, col.value))}
-        ></button>
+        >{#if menuFor.color === col.value}<span class="drop-shadow-[0_1px_1px_rgb(0_0_0/0.5)]"><Icon name="check" size={14} weight="bold" /></span>{/if}</button>
       {/each}
-      <button role="menuitem" class="grid size-6 place-items-center rounded-[4px] border border-base-300 text-muted {menuFor.color ? '' : 'ring-2 ring-base-content ring-offset-2 ring-offset-base-100'}" aria-label="No colour" title="No colour" onclick={() => act(() => app.setColor(menuFor.id, null))}><Icon name="close" size={12} /></button>
+      <label
+        class="relative grid size-7 cursor-pointer place-items-center rounded-[5px] text-white transition-transform hover:scale-110 focus-within:outline-2 focus-within:outline-offset-1 focus-within:outline-base-content"
+        style="background:{customColor ?? 'conic-gradient(#e5484d, #ab4aba, #0090ff, #12a594, #86b31a, #ad7f58, #e5484d)'}"
+        title={customColor ? `Custom colour ${customColor}` : 'Any colour'}
+      >
+        {#if customColor}<span class="drop-shadow-[0_1px_1px_rgb(0_0_0/0.5)]"><Icon name="check" size={14} weight="bold" /></span>{/if}
+        <input
+          type="color"
+          role="menuitem"
+          class="absolute inset-0 size-full cursor-pointer opacity-0"
+          aria-label="Any colour"
+          value={customColor ?? '#5b5bd6'}
+          onchange={(e) => act(() => app.setColor(menuFor.id, e.currentTarget.value))}
+        />
+      </label>
+      <button role="menuitem" class="grid size-7 place-items-center rounded-[5px] border border-base-300 text-muted transition-transform hover:scale-110 hover:text-base-content" aria-label="No colour" aria-current={!menuFor.color} title="No colour" onclick={() => act(() => app.setColor(menuFor.id, null))}>
+        <Icon name={menuFor.color ? 'close' : 'check'} size={13} weight={menuFor.color ? 'regular' : 'bold'} />
+      </button>
     </div>
     <div class="my-1 border-t border-base-300"></div>
     {#each [
@@ -196,6 +263,12 @@
       ['copy', 'Duplicate', () => app.duplicateCollection(menuFor.id)],
       ['merge', 'Merge others into this…', () => app.openMerge(menuFor.id)],
       ['rules', 'Auto-fill…', () => app.openRuleDialog(menuFor.id)],
+      ...(app.ordered
+        ? [
+            ['up', 'Move up', () => app.nudgeCollection(menuFor.id, -1)],
+            ['down', 'Move down', () => app.nudgeCollection(menuFor.id, 1)],
+          ]
+        : []),
     ] as [icon, label, run] ([label])}
       <button role="menuitem" class="flex w-full items-center gap-2.5 rounded-[4px] px-2 py-1.5 text-left hover:bg-base-200 focus-visible:bg-base-200 focus-visible:outline-none" onclick={() => act(run as () => void)}><Icon name={icon as string} size={15} /> {label}</button>
     {/each}
