@@ -1,7 +1,9 @@
 @import 'tailwindcss';
-/* The font ships inside the app, so it looks the same offline. One family does everything:
-   Bricolage Grotesque's optical-size axis gives small text an open, quiet cut and lets titles
-   keep the full character, so labels, numbers and names all read as one voice. */
+/* Both fonts ship inside the app, so it looks the same offline. Atkinson Hyperlegible Next
+   carries everything you read and press: it was drawn for legibility, with letters that
+   can't be mistaken for each other (I, l and 1; O and 0), which matters in a dense list of
+   game names and numbers. Bricolage Grotesque gives the titles their character. */
+@import '@fontsource-variable/atkinson-hyperlegible-next/wght.css';
 @import '@fontsource-variable/bricolage-grotesque/opsz.css';
 @plugin 'daisyui' {
   themes: false;
@@ -9,7 +11,7 @@
 }
 
 @theme {
-  --font-sans: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
+  --font-sans: 'Atkinson Hyperlegible Next Variable', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
   --font-display: 'Bricolage Grotesque Variable', ui-sans-serif, system-ui, 'Segoe UI', sans-serif;
 }
 
