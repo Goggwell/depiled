@@ -9,7 +9,7 @@ export type PlayedFilter = 'any' | 'never' | 'played' | 'idle';
 export type AchFilter = 'any' | 'complete' | 'incomplete';
 export type Choice = 'any' | 'yes' | 'no';
 /** 'new' creates a collection; 'rule' edits the auto-fill criteria of `ruleFor`. */
-export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings' | 'save' | 'merge';
+export type Dialog = null | 'organize' | 'history' | 'new' | 'rule' | 'settings' | 'save' | 'merge' | 'feedback';
 export type Theme = 'system' | 'light' | 'dark';
 
 const THEME_KEY = 'depiled-theme';
@@ -194,6 +194,15 @@ class AppStore {
     update_channel: 'stable',
     account: null,
   });
+  /** A crash to ask about: the reason this window opened (`crashWindow`), or one left over
+   *  from an earlier run. */
+  crash = $state<api.Crash | null>(null);
+  crashWindow = $state(false);
+  canSendReports = $state(false);
+  /** What the feedback dialog starts with, e.g. an error message from a Report button. */
+  feedbackSeed = $state<string | null>(null);
+  /** The last error messages shown or thrown, for bug reports. Not reactive: read on demand. */
+  recentErrors: string[] = [];
   /** The Steam accounts on this computer and which one is shown. */
   accounts = $state.raw<api.Accounts | null>(null);
   currentAccount = $derived(this.accounts?.accounts.find((a) => a.id === this.accounts?.current) ?? null);
@@ -359,6 +368,15 @@ class AppStore {
 
   async init() {
     this.loadTheme();
+    this.canSendReports = await api.canSendReports().catch(() => false);
+    // Opened by a crash: this window only asks about the report.
+    const crashed = await api.crashMode().catch(() => null);
+    if (crashed) {
+      this.crash = crashed;
+      this.crashWindow = true;
+      return;
+    }
+    this.watchErrors();
     this.status = await api.status();
     this.settings = await api.getSettings().catch(() => this.settings);
     this.settingsLoaded = true;
@@ -376,6 +394,8 @@ class AppStore {
     if (this.status.steam_found) {
       await this.refresh();
       this.loadAccounts();
+      // A crash the reporter window didn't get to ask about.
+      api.pendingCrashes().then((c) => (this.crash = c[0] ?? null)).catch(() => {});
       this.refreshOnline();
     }
   }
@@ -882,7 +902,27 @@ class AppStore {
 
   // ---- toasts ------------------------------------------------------------------------
 
+  // ---- feedback ----------------------------------------------------------------------
+
+  openFeedback(seed: string | null = null) {
+    this.feedbackSeed = seed;
+    this.toast = null;
+    this.dialog = 'feedback';
+  }
+
+  private noteError(text: string) {
+    this.recentErrors.push(`${new Date().toISOString().slice(11, 19)} ${text}`.slice(0, 500));
+    if (this.recentErrors.length > 20) this.recentErrors.shift();
+  }
+
+  /** Remembers errors the window hits on its own (not just ones shown), for bug reports. */
+  private watchErrors() {
+    window.addEventListener('error', (e) => this.noteError(`window: ${e.message} (${e.filename?.split('/').pop()}:${e.lineno})`));
+    window.addEventListener('unhandledrejection', (e) => this.noteError(`window: ${e.reason instanceof Error ? e.reason.message : String(e.reason)}`));
+  }
+
   say(text: string, undo: boolean, error = false) {
+    if (error) this.noteError(text);
     this.toast = { text, undo, error };
     clearTimeout(this.toastTimer);
     this.toastTimer = setTimeout(() => (this.toast = null), error ? 10000 : 6000);

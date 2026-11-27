@@ -285,6 +285,12 @@ pub struct Usage {
 
 /// Year and month of a unix time, in UTC.
 fn year_month(secs: u64) -> String {
+    let (year, month, _) = utc_date(secs);
+    format!("{year}-{month:02}")
+}
+
+/// Year, month and day (UTC) of a Unix time.
+pub(crate) fn utc_date(secs: u64) -> (i64, i64, i64) {
     // Days to civil date (Howard Hinnant's algorithm).
     let z = (secs / DAY) as i64 + 719_468;
     let era = z.div_euclid(146_097);
@@ -294,7 +300,7 @@ fn year_month(secs: u64) -> String {
     let mp = (5 * doy + 2) / 153;
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
-    format!("{year}-{month:02}")
+    (year, month, doy - (153 * mp + 2) / 5 + 1)
 }
 
 /// Adds what this process downloaded since the last call to the stored usage.

@@ -7,7 +7,7 @@
 @import '@fontsource-variable/bricolage-grotesque/opsz.css';
 @plugin 'daisyui' {
   themes: false;
-  exclude: alert, aura, avatar, badge, breadcrumbs, calendar, card, carousel, chat, collapse, countdown, diff, divider, dock, drawer, dropdown, fab, fieldset, fileinput, filter, footer, hero, hover3d, hovergallery, indicator, label, list, mask, megamenu, mockup, navbar, otp, radialprogress, rating, skeleton, stack, stat, status, steps, swap, tab, table, textarea, textrotate, timeline, toggle, tooltip, validator, glass;
+  exclude: alert, aura, avatar, badge, breadcrumbs, calendar, card, carousel, chat, collapse, countdown, diff, divider, dock, drawer, dropdown, fab, fieldset, fileinput, filter, footer, hero, hover3d, hovergallery, indicator, label, list, mask, megamenu, mockup, navbar, otp, radialprogress, rating, skeleton, stack, stat, status, steps, swap, tab, table, textrotate, timeline, toggle, tooltip, validator, glass;
 }
 
 @theme {

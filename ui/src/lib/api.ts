@@ -303,6 +303,50 @@ export const refreshOnline = (country: string, force = false) => call<boolean>('
 /** Stops the refresh after the request in flight; what was fetched is kept. */
 export const stopOnline = () => call<void>('stop_online');
 
+// ---- feedback and crash reports ----
+
+/** A crash log waiting to be sent or dismissed. */
+export interface Crash {
+  id: string;
+  at: number;
+  summary: string;
+  text: string;
+}
+
+export interface Report {
+  kind: 'bug' | 'idea' | 'other' | 'crash';
+  message: string;
+  email: string | null;
+  details: string | null;
+}
+
+/** Set when this window was opened to report a crash. */
+export const crashMode = () => call<Crash | null>('crash_mode');
+export const pendingCrashes = () => call<Crash[]>('pending_crashes');
+export const settleCrash = (id: string) => call<void>('settle_crash', { id });
+export const canSendReports = () => call<boolean>('can_send_reports');
+/** The technical part of a report, exactly as it would be sent. */
+export const reportDetails = (recentErrors: string[]) => call<string>('report_details', { recentErrors });
+export const sendReport = (report: Report) => call<void>('send_report', { report });
+export const reportText = (report: Report) => call<string>('report_text', { report });
+/** From the crash window: opens Depiled normally and closes the reporter. */
+export const startNormally = () => call<void>('start_normally');
+
+/** Puts text on the clipboard. False if the system wouldn't allow it. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    const area = Object.assign(document.createElement('textarea'), { value: text });
+    document.body.append(area);
+    area.select();
+    const ok = document.execCommand('copy');
+    area.remove();
+    return ok;
+  }
+}
+
 export const accounts = () => call<Accounts>('accounts');
 /** Shows another account's library, or (null) whoever is signed in to Steam. */
 export const setAccount = (account: number | null) => call<void>('set_account', { account });

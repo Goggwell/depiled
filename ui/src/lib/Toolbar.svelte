@@ -119,6 +119,7 @@
           </div>
         {/if}
       </div>
+      <button class="btn btn-ghost btn-sm btn-square" onclick={() => app.openFeedback()} title="Send feedback or report a problem" aria-label="Send feedback"><Icon name="feedback" size={17} /></button>
       <button class="btn btn-ghost btn-sm btn-square" onclick={() => (app.dialog = 'settings')} title="Settings" aria-label="Settings"><Icon name="gear" size={17} /></button>
       <button class="btn btn-primary btn-sm ml-2" onclick={() => (app.dialog = 'organize')} title="Sort games into collections by your rules, after showing you what would change"><Icon name="rules" size={16} /> Auto-organize</button>
     </div>

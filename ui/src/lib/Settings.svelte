@@ -152,7 +152,7 @@
         {/if}
 
         <section class="{section} text-muted">
-          Your library is read from Steam’s files on this computer. With details from the internet on, Depiled asks Steam, SteamHunters and ProtonDB about your games and reads your public profile. Checking for updates asks GitHub for the newest version number. Nothing else leaves this computer.
+          Your library is read from Steam’s files on this computer. With details from the internet on, Depiled asks Steam, SteamHunters and ProtonDB about your games and reads your public profile. Checking for updates asks GitHub for the newest version number. Feedback and crash reports are only sent when you press Send. Nothing else leaves this computer.
         </section>
       </div>
 

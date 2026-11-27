@@ -11,6 +11,7 @@ use depiled::service::{self, Accounts, CollectionView, DraftState, Library, OpVi
 use depiled::settings::Settings;
 use depiled::smart::SmartRule;
 use depiled::steam::SteamInstall;
+use depiled::report;
 use depiled::watcher;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
@@ -295,6 +296,90 @@ async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country
     });
     Ok(true)
 }
+// ---- bug reports and crashes -------------------------------------------------------------------
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+/// Set when the app was started to report a crash rather than to show the library.
+struct CrashMode(Option<String>);
+
+/// The crash this window was opened to report, if that's why it was opened.
+#[tauri::command]
+fn crash_mode(mode: State<'_, CrashMode>) -> Option<report::Crash> {
+    mode.0.as_deref().and_then(report::crash)
+}
+
+/// Crash logs from earlier runs that haven't been sent or dismissed.
+#[tauri::command]
+fn pending_crashes() -> Vec<report::Crash> {
+    report::pending_crashes()
+}
+
+#[tauri::command]
+fn settle_crash(id: String) -> Res<()> {
+    report::settle_crash(&id).map_err(|e| format!("{e:#}"))
+}
+
+/// Whether this build can send reports itself (the release builds can).
+#[tauri::command]
+fn can_send_reports() -> bool {
+    report::ENDPOINT.is_some_and(|u| !u.is_empty())
+}
+
+/// The technical part of a report, for the user to read before sending.
+#[tauri::command]
+async fn report_details(state: State<'_, Shared>, recent_errors: Vec<String>) -> Res<String> {
+    let shared = state.inner().clone();
+    blocking(move || {
+        let mut summary: Vec<(String, String)> = Vec::new();
+        // Only counts and settings, never names. A session that's busy isn't waited for.
+        if let Ok(guard) = shared.try_lock()
+            && let Some(s) = guard.as_ref()
+        {
+            summary.push(("Library".into(), format!("{} entries, {} collections", s.games.len(), s.collection_views().len())));
+            summary.push(("Steam accounts on this computer".into(), depiled::steam::accounts(&s.install.dir).len().to_string()));
+            summary.push(("Unsaved changes".into(), s.draft_state().pending.to_string()));
+        }
+        if let Ok(settings) = depiled::settings::load() {
+            let automation = settings.automation.map_or("not chosen".to_owned(), |a| format!("{a:?}").to_lowercase());
+            summary.push(("Organize as I play".into(), automation));
+            summary.push(("Details from the internet".into(), if settings.online_stats == Some(true) { "on" } else { "off" }.into()));
+            summary.push(("Updates".into(), format!("{:?}", settings.update_channel).to_lowercase()));
+        }
+        summary.push(("Steam running".into(), depiled::steam::steam_is_running().unwrap_or(false).to_string()));
+        Ok(report::details(VERSION, &summary, &recent_errors))
+    })
+    .await
+}
+
+#[tauri::command]
+async fn send_report(report: report::Report) -> Res<()> {
+    blocking(move || report::send(&report)).await
+}
+
+/// The whole report as text, for copying when it can't be sent.
+#[tauri::command]
+fn report_text(report: report::Report) -> String {
+    report::as_text(&report)
+}
+
+/// Starts Depiled again normally and closes this window. Used by the crash reporter.
+#[tauri::command]
+fn start_normally(app: tauri::AppHandle) {
+    if let Ok(exe) = std::env::current_exe() {
+        let _ = std::process::Command::new(exe).spawn();
+    }
+    app.exit(0);
+}
+
+/// Opens the crash reporter for a crash that just happened: the same program, started with a
+/// flag, so the user is asked straight away. The crashing process ends right after.
+fn open_crash_reporter(file: &std::path::Path) {
+    if let (Ok(exe), Some(name)) = (std::env::current_exe(), file.file_name()) {
+        let _ = std::process::Command::new(exe).arg("--crash-report").arg(name).spawn();
+    }
+}
+
 // ---- accounts -----------------------------------------------------------------------------
 
 #[tauri::command]
@@ -400,13 +485,38 @@ fn stop_online() {
 }
 
 pub fn run() {
+    // Started by a crash, to report it: show only the reporter, and don't watch Steam.
+    let args: Vec<String> = std::env::args().collect();
+    let crash = args.iter().position(|a| a == "--crash-report").and_then(|i| args.get(i + 1)).cloned();
+    let reporting = crash.is_some();
+    if !reporting {
+        report::install_crash_handler(VERSION, Some(open_crash_reporter));
+    }
     let shared: Shared = Arc::new(Mutex::new(None));
     let for_watcher = shared.clone();
     tauri::Builder::default()
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(shared)
         .manage(Found::default())
+        .manage(CrashMode(crash))
         .setup(move |app| {
+            if reporting {
+                if let Some(window) = app.get_webview_window("main") {
+                    let _ = window.set_min_size(None::<tauri::LogicalSize<f64>>);
+                    let _ = window.set_size(tauri::LogicalSize::new(560.0, 640.0));
+                    let _ = window.set_title("Depiled closed unexpectedly");
+                    let _ = window.center();
+                }
+                return Ok(());
+            }
+            // For checking the crash reporter: DEPILED_CRASH_TEST=1 makes the app crash a few
+            // seconds after it starts.
+            if std::env::var_os("DEPILED_CRASH_TEST").is_some() {
+                std::thread::spawn(|| {
+                    std::thread::sleep(Duration::from_secs(4));
+                    panic!("crash test requested with DEPILED_CRASH_TEST");
+                });
+            }
             // Let the page show Steam's cached cover art, and nothing else on disk.
             if let Ok(install) = SteamInstall::detect() {
                 let covers = install.dir.join("appcache").join("librarycache");
@@ -458,6 +568,14 @@ pub fn run() {
             install_update,
             accounts,
             set_account,
+            crash_mode,
+            pending_crashes,
+            settle_crash,
+            can_send_reports,
+            report_details,
+            send_report,
+            report_text,
+            start_normally,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

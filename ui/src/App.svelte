@@ -3,6 +3,8 @@
   import { isDesktop } from './lib/api';
   import { app } from './lib/store.svelte';
   import AutomationBanner from './lib/AutomationBanner.svelte';
+  import CrashReport from './lib/CrashReport.svelte';
+  import Feedback from './lib/Feedback.svelte';
   import CollectionBar from './lib/CollectionBar.svelte';
   import Details from './lib/Details.svelte';
   import Dialogs from './lib/Dialogs.svelte';
@@ -20,7 +22,9 @@
   });
 </script>
 
-{#if !app.status}
+{#if app.crashWindow && app.crash}
+  <div class="h-full bg-base-100"><CrashReport crash={app.crash} standalone /></div>
+{:else if !app.status}
   <div class="grid h-full place-items-center text-muted"><span class="loading loading-ring loading-lg"></span></div>
 {:else if !app.status.steam_found}
   <Setup />
@@ -43,9 +47,15 @@
   <Dialogs />
   <NewCollection />
   <Settings />
+  <Feedback />
+  {#if app.crash}
+    <div class="modal modal-open" role="dialog" aria-label="Depiled closed unexpectedly">
+      <div class="modal-box max-w-lg rounded-box p-0"><CrashReport crash={app.crash} /></div>
+    </div>
+  {/if}
 {/if}
 
-{#if !isDesktop}
+{#if !isDesktop && !app.crashWindow}
   <div class="pointer-events-none fixed left-[118px] top-[19px] z-50 rounded-[4px] bg-neutral px-2.5 py-1 text-xs font-semibold text-neutral-content" title="A demo with invented games">Demo</div>
 {/if}
 
@@ -54,6 +64,9 @@
     <div class="flex items-center gap-3 rounded-box py-2 pl-4 pr-2 text-sm shadow-lg {app.toast.error ? 'bg-error text-error-content' : 'bg-neutral text-neutral-content'}" role="status">
       {#if app.toast.error}<Icon name="warning" size={16} />{/if}
       <span class="max-w-md">{app.toast.text}</span>
+      {#if app.toast.error}
+        <button class="btn btn-sm btn-ghost text-inherit" onclick={() => app.openFeedback(`I saw this error: ${app.toast?.text}\n\nWhat I was doing: `)}>Report</button>
+      {/if}
       {#if app.toast.undo && app.draft.undo}
         <button class="btn btn-sm btn-ghost text-inherit" onclick={() => app.undo()}>Undo</button>
       {/if}

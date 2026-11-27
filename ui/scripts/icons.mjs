@@ -38,10 +38,11 @@ const ICONS = {
   palette: ['Palette'],
   save: ['FloppyDisk'],
   steam: ['GameController'],
-  warning: ['Warning'],
+  warning: ['Warning', 'fill'],
   caret: ['CaretDown'],
   heart: ['Heart'],
   family: ['UsersThree', 'bold'],
+  feedback: ['ChatCircleText'],
 };
 
 const lib = new URL('../node_modules/phosphor-svelte/lib/', import.meta.url);

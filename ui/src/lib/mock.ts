@@ -236,6 +236,13 @@ export function listen(event: string, handler: (e: any) => void) {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+const sampleCrash = () => ({
+  id: 'crash-1795760000.txt',
+  at: Math.floor(Date.now() / 1000) - 60,
+  summary: 'Depiled 0.2.2 stopped: index out of bounds',
+  text: 'Depiled 0.2.2 stopped: index out of bounds: the len is 3 but the index is 7\nat src/service.rs:512 (thread main)\nWindows 11 Home 24H2 (build 26200), x86_64\nTime: 1795760000\n\nBacktrace:\n   0: <unknown>\n   1: <unknown>\n',
+});
+
 export async function call<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
   await sleep(60);
   const r = (x: unknown) => x as T;
@@ -387,6 +394,25 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
     }
     case 'stop_online':
       stopRequested = true;
+      return r(undefined);
+    case 'crash_mode':
+      // ?crash in the demo's address shows the crash window.
+      return r(new URLSearchParams(location.search).has('crash') ? sampleCrash() : null);
+    case 'pending_crashes':
+      return r(new URLSearchParams(location.search).has('crashed') ? [sampleCrash()] : []);
+    case 'settle_crash':
+      return r(undefined);
+    case 'can_send_reports':
+      return r(true);
+    case 'report_details':
+      return r(`Depiled 0.2.2\nWindows 11 Home 24H2 (build 26200), x86_64\nLibrary: ${games.length} entries, 6 collections\nSteam accounts on this computer: 2\nOrganize as I play: notify\nDetails from the internet: on\nUpdates: stable\nSteam running: true${args.recentErrors?.length ? '\n\nRecent errors, newest last:\n' + args.recentErrors.map((e: string) => '- ' + e).join('\n') : ''}`);
+    case 'send_report':
+      await sleep(700);
+      return r(undefined);
+    case 'report_text':
+      return r(`Depiled ${args.report.kind} report\n\n${args.report.message}`);
+    case 'start_normally':
+      location.search = '';
       return r(undefined);
     case 'accounts':
       return r({

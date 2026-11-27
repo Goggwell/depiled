@@ -14,6 +14,7 @@ pub mod local;
 pub mod model;
 pub mod online;
 pub mod ops;
+pub mod report;
 pub mod rules;
 pub mod service;
 pub mod settings;
