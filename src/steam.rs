@@ -53,7 +53,7 @@ pub struct Account {
 /// list of its licenses. (Folders without one belong to accounts that only ever signed in
 /// briefly, and have nothing to organize.) Names come from Steam's list of remembered logins.
 pub fn accounts(dir: &Path) -> Vec<Account> {
-    let logins = std::fs::read_to_string(dir.join("config").join("loginusers.vdf")).ok().and_then(|t| crate::vdf::parse_text(&t).ok());
+    let logins = crate::vdf::read_text(&dir.join("config").join("loginusers.vdf")).ok().and_then(|t| crate::vdf::parse_text(&t).ok());
     let users = logins.as_ref().and_then(|v| v.get("users"));
     let mut out = Vec::new();
     for entry in std::fs::read_dir(dir.join("userdata")).into_iter().flatten().flatten() {

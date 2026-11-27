@@ -333,6 +333,25 @@ mod tests {
     }
 
     #[test]
+    fn awkward_names_survive_a_save_unchanged() {
+        let dir = temp("names");
+        sample(&dir);
+        let mut cat = Catalog::read_dir(&dir, None).unwrap();
+        let names = [r#"Say "hi""#, r"C:\Games\Old", "🏆 Completed", "Café — Ünïcödé 日本語", r"ends with \"];
+        for (i, name) in names.iter().enumerate() {
+            cat.apply(&Op::Create { id: format!("uc-N{i}"), name: (*name).into(), apps: vec![i as u32 + 1] }).unwrap();
+        }
+        cat.write().unwrap();
+        // Steam's file is still valid JSON, and every name reads back exactly.
+        let raw = std::fs::read_to_string(dir.join(FILE)).unwrap();
+        assert!(serde_json::from_str::<Value>(&raw).is_ok());
+        let again = Catalog::read_dir(&dir, None).unwrap().collections();
+        for (i, name) in names.iter().enumerate() {
+            assert_eq!(again.iter().find(|c| c.id == format!("uc-N{i}")).unwrap().name, *name);
+        }
+    }
+
+    #[test]
     fn edits_round_trip_and_are_marked_for_upload() {
         let dir = temp("edit");
         sample(&dir);

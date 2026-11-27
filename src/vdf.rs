@@ -50,7 +50,18 @@ impl Value {
     }
 }
 
-/// Parses the text format. Returns an object holding the top-level entries.
+/// Reads a text KeyValues file. Steam writes UTF-8, but a file damaged or written by another
+/// tool can hold other bytes; those become U+FFFD instead of making the whole file unreadable.
+/// A leading byte-order mark is dropped.
+pub fn read_text(path: &std::path::Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let text = String::from_utf8_lossy(&bytes);
+    Ok(text.strip_prefix('\u{feff}').unwrap_or(&text).to_owned())
+}
+
+/// Parses the text format. Returns an object holding the top-level entries. Keys can repeat
+/// (all are kept, in order; `get` finds the first), strings can be quoted or bare, and
+/// `[$WIN32]`-style platform conditions are skipped.
 pub fn parse_text(text: &str) -> Result<Value> {
     let mut tokens = Tokenizer { chars: text.chars().peekable() };
     let items = parse_items(&mut tokens, true)?;
@@ -78,6 +89,12 @@ impl Tokenizer<'_> {
                 '/' => {
                     // `// comment` to end of line.
                     while self.chars.next_if(|&c| c != '\n').is_some() {}
+                }
+                '[' => {
+                    // A platform condition after a key or value, like [$WIN32]. Both branches
+                    // are kept; Depiled reads none of the keys Valve makes conditional.
+                    while self.chars.next_if(|&c| c != ']' && c != '\n').is_some() {}
+                    self.chars.next_if(|&c| c == ']');
                 }
                 '{' => {
                     self.chars.next();
@@ -233,6 +250,18 @@ impl<'a> BinaryReader<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn text_quirks_are_read() {
+        let text = "\u{feff}\"Root\"\n{\n  \"Name\" \"Say \\\"hi\\\" \\\\ done\" [$WIN32]\n  bare word\n  \"dup\" \"1\"\n  \"DUP\" \"2\"\n  // a comment\n  \"Café\" \"日本語\"\n}\n";
+        let root = parse_text(text.trim_start_matches('\u{feff}')).unwrap();
+        let r = root.get("root").unwrap();
+        assert_eq!(r.get("name").and_then(Value::as_str), Some(r#"Say "hi" \ done"#));
+        assert_eq!(r.get("bare").and_then(Value::as_str), Some("word"));
+        assert_eq!(r.get("dup").and_then(Value::as_str), Some("1"), "first of a repeated key");
+        assert_eq!(r.entries().len(), 5);
+        assert_eq!(r.get("Café").and_then(Value::as_str), Some("日本語"));
+    }
 
     #[test]
     fn parses_text() {

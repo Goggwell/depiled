@@ -21,7 +21,7 @@ pub struct Play {
 /// Playtime and last launch per app, from `localconfig.vdf`.
 pub fn playtime(install: &SteamInstall) -> Result<HashMap<u32, Play>> {
     let file = install.config_dir().join("localconfig.vdf");
-    let text = std::fs::read_to_string(&file).with_context(|| format!("reading {}", file.display()))?;
+    let text = vdf::read_text(&file).with_context(|| format!("reading {}", file.display()))?;
     let root = vdf::parse_text(&text)?;
     let apps = root.path(&["UserLocalConfigStore", "Software", "Valve", "Steam", "apps"]);
     Ok(apps
@@ -187,7 +187,7 @@ pub fn library(install: &SteamInstall, in_collections: &BTreeSet<u32>) -> Result
 pub fn screenshots(install: &SteamInstall) -> std::collections::HashSet<u32> {
     let base = install.dir.join("userdata").join(install.account_id.to_string()).join("760");
     let mut out = std::collections::HashSet::new();
-    if let Some(root) = std::fs::read_to_string(base.join("screenshots.vdf")).ok().and_then(|t| vdf::parse_text(&t).ok()) {
+    if let Some(root) = vdf::read_text(&base.join("screenshots.vdf")).ok().and_then(|t| vdf::parse_text(&t).ok()) {
         for (id, shots) in root.get("Screenshots").map(Value::entries).unwrap_or_default() {
             if let Ok(id) = id.parse::<u32>()
                 && !shots.entries().is_empty()
@@ -209,7 +209,7 @@ pub fn screenshots(install: &SteamInstall) -> std::collections::HashSet<u32> {
 /// Installed apps and their size on disk, from every Steam library folder.
 pub fn installed(install: &SteamInstall) -> HashMap<u32, u64> {
     let file = install.dir.join("steamapps").join("libraryfolders.vdf");
-    let Some(root) = std::fs::read_to_string(file).ok().and_then(|t| vdf::parse_text(&t).ok()) else { return HashMap::new() };
+    let Some(root) = vdf::read_text(&file).ok().and_then(|t| vdf::parse_text(&t).ok()) else { return HashMap::new() };
     let mut out = HashMap::new();
     for (_, folder) in root.get("libraryfolders").map(Value::entries).unwrap_or_default() {
         for (id, size) in folder.get("apps").map(Value::entries).unwrap_or_default() {
