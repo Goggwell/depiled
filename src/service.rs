@@ -909,11 +909,10 @@ impl Session {
         self.base = after.clone();
         self.draft = after;
         self.persist();
-        if let Ok((config, text)) = config::load() {
-            if let Some(dir) = &config.backup_dir {
+        if let Ok((config, text)) = config::load()
+            && let Some(dir) = &config.backup_dir {
                 crate::bundle::auto_backup(dir, self.base.clone(), Some(text), 10)?;
             }
-        }
         Ok(SaveReport { snapshot: folder.file_name().map(|n| n.to_string_lossy().into_owned()), changes: ops.len(), verified })
     }
 
@@ -949,6 +948,7 @@ impl Session {
                     playtime: g.playtime_minutes,
                     known_total: self.hunters.get(&g.appid).map_or(0, |h| h.achievements).max(g.achievements.map_or(0, |a| a.total)),
                     local_at: self.local_progress_at.get(&g.appid).copied().unwrap_or(0),
+                    change: g.change,
                 })
                 .collect(),
             country: country.to_ascii_uppercase(),
@@ -966,14 +966,16 @@ impl Session {
 /// for), and ProtonDB. Each site still gets one request at a time with its usual pause, so this
 /// is as polite as running them in a row, and a first run takes as long as the slowest lane
 /// instead of all of them added up.
-pub fn run_online(job: &OnlineJob, progress: &(dyn Fn(&str, usize, usize) + Sync)) -> Vec<String> {
+/// `saved` is told each time a source has finished and saved what it fetched, so the window
+/// can show it straight away instead of waiting for the slowest source.
+pub fn run_online(job: &OnlineJob, progress: &(dyn Fn(&str, usize, usize) + Sync), saved: &(dyn Fn() + Sync)) -> Vec<String> {
     let now = snapshot::now_secs();
     let errors = std::sync::Mutex::new(Vec::new());
     let fail = |e: String| errors.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(e);
     std::thread::scope(|scope| {
-        scope.spawn(|| store_lane(job, now, progress, &fail));
-        scope.spawn(|| profile_lane(job, now, progress, &fail));
-        scope.spawn(|| proton_lane(job, now, progress, &fail));
+        scope.spawn(|| store_lane(job, now, progress, &fail, saved));
+        scope.spawn(|| profile_lane(job, now, progress, &fail, saved));
+        scope.spawn(|| proton_lane(job, now, progress, &fail, saved));
     });
     let mut errors = errors.into_inner().unwrap_or_else(std::sync::PoisonError::into_inner);
     // Stopping isn't a problem to report.
@@ -985,14 +987,20 @@ pub fn run_online(job: &OnlineJob, progress: &(dyn Fn(&str, usize, usize) + Sync
 }
 
 type Progress<'a> = &'a (dyn Fn(&str, usize, usize) + Sync);
+type Saved<'a> = &'a (dyn Fn() + Sync);
 
 /// SteamHunters, then the achievement pages of the user's profile.
-fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync)) {
+fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync), saved: Saved) {
     let s = &job.settings;
-    let ids: Vec<u32> = job.games.iter().map(|g| g.appid).collect();
     if s.online_hunters {
-        if let Err(e) = hunters::refresh(&ids, now, job.force, &mut |d, t| progress("completion times", d, t)) {
-            fail(format!("Completion times: {e:#}"));
+        let games: Vec<(u32, u32)> = job.games.iter().map(|g| (g.appid, g.change)).collect();
+        match hunters::refresh(&games, now, job.force, &mut |d, t| progress("completion times", d, t)) {
+            Ok(0) => {}
+            Ok(_) => saved(),
+            Err(e) => {
+                fail(format!("Completion times: {e:#}"));
+                saved();
+            }
         }
     }
     if s.online_achievements {
@@ -1009,16 +1017,20 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
             .collect();
         // A private profile is retried daily.
         let skip = cache.private && now.saturating_sub(cache.checked) < 24 * 3600 && !job.force;
-        let due = if skip { Vec::new() } else { online::achievements_due(&cache, &hints, now, job.force) };
+        let mut due = if skip { Vec::new() } else { online::achievements_due(&cache, &hints, now, job.force) };
+        // Most recently played first: on a long first run, the games the user cares about now
+        // fill in first.
+        due.sort_by_key(|h| std::cmp::Reverse(h.last_played));
         if !due.is_empty() {
             if let Err(e) = online::refresh_achievements(job.steam64, &due, now, &mut |d, t| progress("achievement progress", d, t)) {
                 fail(format!("Achievements: {e:#}"));
             }
+            saved();
         }
     }
 }
 
-fn proton_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync)) {
+fn proton_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync), saved: Saved) {
     if job.settings.online_protondb {
         // One request per game, so only games the account owns.
         let ids: Vec<u32> = job.games.iter().map(|g| g.appid).collect();
@@ -1027,12 +1039,13 @@ fn proton_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(Str
             if let Err(e) = online::refresh_proton(&due, now, &mut |d, t| progress("ProtonDB ratings", d, t)) {
                 fail(format!("ProtonDB: {e:#}"));
             }
+            saved();
         }
     }
 }
 
 /// Store details (price, sale and its end date, review counts) for owned games, weekly.
-fn store_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync)) {
+fn store_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync), saved: Saved) {
     if job.settings.online_prices {
         let ids: Vec<u32> = job.games.iter().map(|g| g.appid).collect();
         let mut cache: online::StoreCache = online::load(online::STORE_FILE);
@@ -1043,13 +1056,14 @@ fn store_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(Stri
             if let Err(e) = online::save(online::STORE_FILE, &cache) {
                 fail(format!("Prices: {e:#}"));
             }
-            progress("prices for the new region", 0, 0);
+            saved();
         }
         let due = online::store_due(&cache, &ids, &job.country, now, online::WEEK, job.force);
         if !due.is_empty() {
             if let Err(e) = online::refresh_store(&due, &job.country, now, &mut |d, t| progress("store details", d, t)) {
                 fail(format!("Store details: {e:#}"));
             }
+            saved();
         }
     }
 }

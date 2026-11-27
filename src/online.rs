@@ -6,15 +6,17 @@
 //! - Store data: prices and discounts for a region, and review counts (Steam's store API).
 //! - Linux compatibility ratings from ProtonDB.
 
+use std::borrow::Cow;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Mutex, MutexGuard, PoisonError};
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, Result, bail};
-use serde::de::DeserializeOwned;
-use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use anyhow::{Context, Result, anyhow, bail};
+use serde::de::{DeserializeOwned, IgnoredAny};
+use serde::{Deserialize, Deserializer, Serialize};
+use serde_json::value::RawValue;
 
 use crate::config;
 
@@ -59,29 +61,187 @@ pub(crate) const USER_AGENT: &str = concat!("Mozilla/5.0 (compatible; Depiled/",
 
 /// One HTTP client for every source and every run. It keeps connections open between requests,
 /// so a batch of pages to the same site costs one TLS handshake instead of one per page.
-/// Answers arrive gzip-compressed (ureq asks for it and unpacks it).
+/// Answers arrive gzip-compressed (ureq asks for it and unpacks it). None of these sites
+/// offers HTTP/2 or brotli to clients like this one, so gzip over HTTP/1.1 is what there is.
 pub fn agent() -> ureq::Agent {
     static AGENT: std::sync::LazyLock<ureq::Agent> = std::sync::LazyLock::new(|| {
-        ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(30))).user_agent(USER_AGENT).build().new_agent()
+        ureq::Agent::config_builder()
+            .timeout_global(Some(Duration::from_secs(30)))
+            .user_agent(USER_AGENT)
+            // Error statuses come back as answers, so "too many requests" can be read for how
+            // long to wait, and a 404 for what it means (see `Pace::send`).
+            .http_status_as_error(false)
+            .build()
+            .new_agent()
     });
     AGENT.clone()
 }
 
-fn get(agent: &ureq::Agent, url: &str) -> Result<String> {
-    let mut resp = agent.get(url).call().with_context(|| format!("couldn't reach {}", host(url)))?;
-    let sent = sent_size(&resp);
-    let text = resp.body_mut().with_config().limit(8 * 1024 * 1024).read_to_string().context("reading the answer")?;
+pub(crate) type Response = ureq::http::Response<ureq::Body>;
+
+fn get(pace: &Pace, agent: &ureq::Agent, url: &str) -> Result<String> {
+    let site = host(url);
+    let mut resp = pace.send(site, || agent.get(url).call())?;
+    ok(&resp, site)?;
+    read_text(&mut resp, 8 * 1024 * 1024)
+}
+
+/// Reads an answer's text and counts it toward the data usage.
+pub(crate) fn read_text(resp: &mut Response, limit: u64) -> Result<String> {
+    let sent = sent_size(resp);
+    let text = resp.body_mut().with_config().limit(limit).read_to_string().context("reading the answer")?;
     count_text(sent, &text);
     Ok(text)
+}
+
+/// An error for an answer that isn't a success (or "not modified").
+pub(crate) fn ok(resp: &Response, site: &str) -> Result<()> {
+    let status = resp.status();
+    if status.is_success() || status == 304 { Ok(()) } else { Err(anyhow!("{site} answered {status}")) }
 }
 
 fn host(url: &str) -> &str {
     url.split('/').nth(2).unwrap_or(url)
 }
 
-fn pause(ms: u64) -> Result<()> {
-    std::thread::sleep(Duration::from_millis(ms));
-    check_cancel()
+fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
+/// Keeps requests to one site at least `gap` apart, measured from the start of one request to
+/// the start of the next. The time a response takes counts toward the gap, so a slow answer
+/// isn't followed by a full pause as well: the site sees the same rate, the run finishes
+/// sooner. Several threads can share one; they take turns.
+pub(crate) struct Pace {
+    slot: Mutex<(Duration, Option<Instant>)>,
+}
+
+/// Waits after a failure that is likely to pass, before the second and third tries.
+const BACKOFF_SECS: [u64; 2] = [2, 8];
+/// Longest wait a site can ask for before trying again.
+const MAX_RETRY_AFTER_SECS: u64 = 60;
+
+impl Pace {
+    pub(crate) fn new(gap_ms: u64) -> Self {
+        Self { slot: Mutex::new((Duration::from_millis(gap_ms), None)) }
+    }
+
+    /// Waits until the next request may start, then checks for a stop.
+    pub(crate) fn wait(&self) -> Result<()> {
+        {
+            let mut slot = lock(&self.slot);
+            let (gap, last) = *slot;
+            if let Some(left) = last.and_then(|t| gap.checked_sub(t.elapsed())) {
+                std::thread::sleep(left);
+            }
+            slot.1 = Some(Instant::now());
+        }
+        check_cancel()
+    }
+
+    /// The site asked to slow down: twice the gap for the rest of the run, up to 10 seconds.
+    fn slow_down(&self) {
+        let mut slot = lock(&self.slot);
+        slot.0 = (slot.0 * 2).min(Duration::from_secs(10));
+    }
+
+    /// Waits for a turn and sends the request. A failure that is likely to pass (a timeout, a
+    /// dropped connection, a server error, "too many requests") is tried again, up to three
+    /// tries in all, after as long as the site asks or a short backoff. Every other answer is
+    /// returned, error statuses included, for the caller to read.
+    pub(crate) fn send(&self, site: &str, mut call: impl FnMut() -> Result<Response, ureq::Error>) -> Result<Response> {
+        let mut backoff = BACKOFF_SECS.into_iter();
+        loop {
+            self.wait()?;
+            let (asked, problem) = match call() {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.as_u16() != 429 && !status.is_server_error() {
+                        return Ok(resp);
+                    }
+                    if status.as_u16() == 429 {
+                        self.slow_down();
+                    }
+                    (retry_after(&resp), anyhow!("{site} answered {status}"))
+                }
+                Err(e) if transient(&e) => (None, anyhow!("couldn't reach {site}: {e}")),
+                Err(e) => return Err(anyhow!("couldn't reach {site}: {e}")),
+            };
+            let Some(wait) = backoff.next() else { return Err(problem) };
+            pause(Duration::from_secs(asked.unwrap_or(wait).min(MAX_RETRY_AFTER_SECS)))?;
+        }
+    }
+}
+
+/// Failures worth another try. Not "host not found": that's almost always being offline.
+fn transient(e: &ureq::Error) -> bool {
+    matches!(e, ureq::Error::Timeout(_) | ureq::Error::Io(_) | ureq::Error::ConnectionFailed | ureq::Error::BodyStalled | ureq::Error::Protocol(_))
+}
+
+/// Seconds the site asks to wait, if it says. (The date form isn't used by these sites.)
+fn retry_after(resp: &Response) -> Option<u64> {
+    resp.headers().get("retry-after")?.to_str().ok()?.trim().parse().ok()
+}
+
+/// Sleeps, waking now and then to stop if asked.
+fn pause(d: Duration) -> Result<()> {
+    let end = Instant::now() + d;
+    while let Some(left) = end.checked_duration_since(Instant::now()).filter(|l| !l.is_zero()) {
+        std::thread::sleep(left.min(Duration::from_millis(200)));
+        check_cancel()?;
+    }
+    Ok(())
+}
+
+/// Reads a number however the API sends it: as a number or as text (Steam sends 64-bit
+/// numbers as text). Anything else counts as unknown rather than failing the whole answer.
+struct Lenient;
+
+impl<'de> serde::de::Visitor<'de> for Lenient {
+    type Value = Option<u64>;
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a number")
+    }
+    fn visit_u64<E>(self, v: u64) -> Result<Self::Value, E> {
+        Ok(Some(v))
+    }
+    fn visit_i64<E>(self, v: i64) -> Result<Self::Value, E> {
+        Ok(u64::try_from(v).ok())
+    }
+    fn visit_f64<E>(self, _: f64) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+    fn visit_bool<E>(self, _: bool) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E> {
+        Ok(v.trim().parse().ok())
+    }
+    fn visit_unit<E>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+    fn visit_none<E>(self) -> Result<Self::Value, E> {
+        Ok(None)
+    }
+    fn visit_some<D: Deserializer<'de>>(self, d: D) -> Result<Self::Value, D::Error> {
+        d.deserialize_any(self)
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Self::Value, A::Error> {
+        while seq.next_element::<IgnoredAny>()?.is_some() {}
+        Ok(None)
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Self::Value, A::Error> {
+        while map.next_entry::<IgnoredAny, IgnoredAny>()?.is_some() {}
+        Ok(None)
+    }
+}
+
+fn num<'de, D: Deserializer<'de>, T: TryFrom<u64> + Default>(d: D) -> Result<T, D::Error> {
+    Ok(d.deserialize_any(Lenient)?.and_then(|n| T::try_from(n).ok()).unwrap_or_default())
+}
+
+fn opt_num<'de, D: Deserializer<'de>>(d: D) -> Result<Option<u64>, D::Error> {
+    d.deserialize_any(Lenient)
 }
 
 // ---- cache files ---------------------------------------------------------------------------
@@ -193,6 +353,9 @@ pub struct AchievementHint {
     pub known_total: u32,
     /// When Steam last wrote this game's progress to disk on this computer, 0 if never.
     pub local_at: u64,
+    /// Steam's change number for the game, 0 if unknown. SteamHunters is asked again when it
+    /// moves, since that's when an update can have added achievements.
+    pub change: u32,
 }
 
 /// Games whose achievement page is worth fetching. Each page is the biggest download Depiled
@@ -244,38 +407,97 @@ pub fn parse_achievement_page(html: &str) -> Option<(u32, u32)> {
     let body = &html[start..];
     let body = &body[body.find('>')? + 1..];
     let body = &body[..body.find("</script>")?];
-    let ssr: Value = serde_json::from_str(body).ok()?;
-    let queries: Value = serde_json::from_str(ssr.pointer("/renderContext/queryData")?.as_str()?).ok()?;
-    let queries = queries.get("queries")?.as_array()?;
+    // Only the few fields used are read; the rest of the page data (every achievement's name,
+    // description and icon) is skipped over without building anything from it.
+    let ssr: page::Ssr = serde_json::from_str(body).ok()?;
+    let queries: page::Queries = serde_json::from_str(&ssr.render_context.query_data).ok()?;
 
     let mut unlocked = None;
     let mut total = None;
-    for q in queries {
-        let key = q.get("queryKey").and_then(Value::as_array);
-        let data = q.pointer("/state/data");
-        let (Some(key), Some(data)) = (key, data) else { continue };
-        if key.first().and_then(Value::as_str) != Some("achievements") {
+    for q in &queries.queries {
+        let (Some(data), Some(kind)) = (q.state.as_ref().and_then(|s| s.data), q.query_key.first()) else { continue };
+        if kind.get() != "\"achievements\"" {
             continue;
         }
-        if key.get(2).and_then(Value::as_str) == Some("user_achievements") {
-            let map = data.get("achievements")?.as_object()?;
-            if map.is_empty() {
+        if q.query_key.get(2).map(|k| k.get()) == Some("\"user_achievements\"") {
+            let player: page::Player = serde_json::from_str(data.get()).ok()?;
+            if player.achievements.is_empty() {
                 return None;
             }
-            unlocked = Some(map.values().filter(|a| a.get("unlocked").and_then(Value::as_bool) == Some(true)).count() as u32);
-        } else if let Some(groups) = data.get("groups").and_then(Value::as_array) {
+            unlocked = Some(player.achievements.values().filter(|a| a.unlocked).count() as u32);
+        } else if let Ok(schema) = serde_json::from_str::<page::Schema>(data.get()) {
             // The schema ("schema_v2"). Archived groups were removed from the game.
-            total = Some(
-                groups
-                    .iter()
-                    .filter(|g| g.get("archived").and_then(Value::as_bool) != Some(true))
-                    .filter_map(|g| g.get("achievements")?.as_array())
-                    .map(|a| a.len() as u32)
-                    .sum(),
-            );
+            total = Some(schema.groups.iter().filter(|g| !g.archived).map(|g| g.achievements.len() as u32).sum());
         }
     }
     Some((unlocked?, total?)).filter(|(_, t)| *t > 0)
+}
+
+/// The parts of a profile achievements page that are read.
+mod page {
+    use super::*;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Ssr<'a> {
+        #[serde(borrow)]
+        pub render_context: RenderContext<'a>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct RenderContext<'a> {
+        /// JSON inside a JSON string, so it's unescaped into its own text first.
+        #[serde(borrow)]
+        pub query_data: Cow<'a, str>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Queries<'a> {
+        #[serde(borrow)]
+        pub queries: Vec<Query<'a>>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    pub struct Query<'a> {
+        #[serde(borrow, default)]
+        pub query_key: Vec<&'a RawValue>,
+        #[serde(borrow)]
+        pub state: Option<State<'a>>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct State<'a> {
+        #[serde(borrow)]
+        pub data: Option<&'a RawValue>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Player<'a> {
+        #[serde(borrow)]
+        pub achievements: BTreeMap<Cow<'a, str>, Unlocked>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Unlocked {
+        #[serde(default)]
+        pub unlocked: bool,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Schema {
+        pub groups: Vec<Group>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Group {
+        #[serde(default)]
+        pub archived: bool,
+        /// Only counted, so nothing is kept of each one.
+        #[serde(default)]
+        pub achievements: Vec<IgnoredAny>,
+    }
 }
 
 /// Fetches achievement progress for `appids` from the user's public profile, one page per game.
@@ -283,17 +505,14 @@ pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, p
     let mut cache: AchievementCache = load(ACHIEVEMENTS_FILE);
     let agent = agent();
     let mut misses = 0;
+    let pace = Pace::new(1200);
     // Persist the partial batch on cancellation and on transport errors.
     let result = (|| -> Result<()> {
         for (i, hint) in games.iter().enumerate() {
             let AchievementHint { appid, playtime, known_total, .. } = *hint;
-            check_cancel()?;
-            if i > 0 {
-                pause(1200)?;
-            }
             // This address answers directly. The older /stats/<app>/achievements/ one redirects
             // twice first, tripling the round trips.
-            let html = get(&agent, &format!("https://steamcommunity.com/profiles/{steam64}/achievements/{appid}?l=english"))?;
+            let html = get(&pace, &agent, &format!("https://steamcommunity.com/profiles/{steam64}/achievements/{appid}?l=english"))?;
             match parse_achievement_page(&html) {
                 Some((unlocked, total)) => {
                     cache.games.insert(appid, Progress { unlocked, total, fetched: now, playtime, compared_total: known_total });
@@ -316,7 +535,7 @@ pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, p
                     entry.compared_total = known_total;
                 }
             }
-            if i % 10 == 9 {
+            if i % 5 == 4 {
                 save(ACHIEVEMENTS_FILE, &cache)?;
             }
             progress(i + 1, games.len());
@@ -414,45 +633,134 @@ pub fn store_due(cache: &StoreCache, appids: &[u32], country: &str, now: u64, ma
         .collect()
 }
 
-fn cents(v: Option<&Value>) -> Option<u64> {
-    v.and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64()))
+/// The parts of the store's answer that are read.
+mod items {
+    use super::*;
+
+    #[derive(Deserialize)]
+    pub struct Answer {
+        pub response: Option<Body>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Body {
+        pub store_items: Option<Vec<Item>>,
+        /// Anything else, to tell an answer with no items from one with something unexpected.
+        #[serde(flatten)]
+        pub rest: BTreeMap<String, IgnoredAny>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Item {
+        #[serde(default, deserialize_with = "opt_num")]
+        pub appid: Option<u64>,
+        #[serde(default, deserialize_with = "opt_num")]
+        pub id: Option<u64>,
+        #[serde(default)]
+        pub name: String,
+        pub best_purchase_option: Option<Purchase>,
+        pub reviews: Option<Reviews>,
+        pub release: Option<Release>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Purchase {
+        #[serde(default, deserialize_with = "opt_num")]
+        pub final_price_in_cents: Option<u64>,
+        #[serde(default, deserialize_with = "opt_num")]
+        pub original_price_in_cents: Option<u64>,
+        pub formatted_final_price: Option<String>,
+        #[serde(default, deserialize_with = "num")]
+        pub discount_pct: u32,
+        #[serde(default)]
+        pub active_discounts: Vec<Discount>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Discount {
+        #[serde(default, deserialize_with = "num")]
+        pub discount_end_date: u64,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Reviews {
+        pub summary_filtered: Option<Summary>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Summary {
+        #[serde(default, deserialize_with = "num")]
+        pub review_count: u64,
+        #[serde(default, deserialize_with = "num")]
+        pub percent_positive: u32,
+        #[serde(default)]
+        pub review_score_label: String,
+    }
+
+    #[derive(Deserialize)]
+    pub struct Release {
+        #[serde(default, deserialize_with = "num")]
+        pub steam_release_date: u64,
+    }
 }
 
 pub fn parse_store_items(text: &str, now: u64) -> Result<Vec<(u32, StoreInfo)>> {
-    let v: Value = serde_json::from_str(text).context("the store sent something unexpected")?;
-    let response = v.get("response").and_then(Value::as_object).context("the store response is missing")?;
-    let items = match response.get("store_items") {
-        Some(items) => items.as_array().context("invalid store items")?.as_slice(),
-        None if response.is_empty() => &[],
+    let answer: items::Answer = serde_json::from_str(text).context("the store sent something unexpected")?;
+    let body = answer.response.context("the store response is missing")?;
+    let items = match body.store_items {
+        Some(items) => items,
+        None if body.rest.is_empty() => Vec::new(),
         None => bail!("the store response has no items"),
     };
     Ok(items
-        .iter()
+        .into_iter()
         .filter_map(|it| {
-            let appid = it.get("appid").or_else(|| it.get("id"))?.as_u64()? as u32;
-            let best = it.get("best_purchase_option");
-            let reviews = it.pointer("/reviews/summary_filtered");
+            let appid = u32::try_from(it.appid.or(it.id)?).ok()?;
+            let best = it.best_purchase_option;
+            let reviews = it.reviews.and_then(|r| r.summary_filtered);
             Some((
                 appid,
                 StoreInfo {
-                    name: it.get("name").and_then(Value::as_str).unwrap_or_default().to_owned(),
-                    price_cents: best.and_then(|b| cents(b.get("final_price_in_cents"))),
-                    original_cents: best.and_then(|b| cents(b.get("original_price_in_cents"))),
-                    price_text: best.and_then(|b| b.get("formatted_final_price")).and_then(Value::as_str).map(str::to_owned),
-                    discount: best.and_then(|b| b.get("discount_pct")).and_then(Value::as_u64).unwrap_or(0) as u32,
-                    discount_ends: best
-                        .and_then(|b| b.pointer("/active_discounts/0/discount_end_date"))
-                        .and_then(Value::as_u64)
-                        .unwrap_or(0),
-                    review_count: reviews.and_then(|r| r.get("review_count")).and_then(Value::as_u64).unwrap_or(0),
-                    review_label: reviews.and_then(|r| r.get("review_score_label")).and_then(Value::as_str).unwrap_or_default().to_owned(),
-                    review_percent: reviews.and_then(|r| r.get("percent_positive")).and_then(Value::as_u64).unwrap_or(0) as u32,
-                    release: it.pointer("/release/steam_release_date").and_then(Value::as_u64).unwrap_or(0),
+                    name: it.name,
+                    price_cents: best.as_ref().and_then(|b| b.final_price_in_cents),
+                    original_cents: best.as_ref().and_then(|b| b.original_price_in_cents),
+                    discount: best.as_ref().map_or(0, |b| b.discount_pct),
+                    discount_ends: best.as_ref().and_then(|b| b.active_discounts.first()).map_or(0, |d| d.discount_end_date),
+                    price_text: best.and_then(|b| b.formatted_final_price),
+                    review_count: reviews.as_ref().map_or(0, |r| r.review_count),
+                    review_percent: reviews.as_ref().map_or(0, |r| r.percent_positive),
+                    review_label: reviews.map(|r| r.review_score_label).unwrap_or_default(),
+                    release: it.release.map_or(0, |r| r.steam_release_date),
                     fetched: now,
                 },
             ))
         })
         .collect())
+}
+
+/// What the store is asked for: the items, the region, and reviews and release dates with them.
+#[derive(Serialize)]
+struct ItemsQuery<'a> {
+    ids: Vec<ItemId>,
+    context: ItemsContext<'a>,
+    data_request: ItemsRequest,
+}
+
+#[derive(Serialize)]
+struct ItemId {
+    appid: u32,
+}
+
+#[derive(Serialize)]
+struct ItemsContext<'a> {
+    language: &'a str,
+    country_code: &'a str,
+}
+
+#[derive(Serialize)]
+struct ItemsRequest {
+    include_reviews: bool,
+    include_release: bool,
 }
 
 fn apply_store_batch(cache: &mut StoreCache, batch: &[u32], text: &str, now: u64) -> Result<()> {
@@ -471,29 +779,20 @@ pub fn refresh_store(appids: &[u32], country: &str, now: u64, progress: &mut dyn
     let mut cache: StoreCache = load(STORE_FILE);
     cache.switch_to(country);
     let agent = agent();
+    let pace = Pace::new(1000);
     let mut done = 0;
     let result = (|| -> Result<()> {
         for (i, batch) in appids.chunks(100).enumerate() {
-            check_cancel()?;
-            if i > 0 {
-                pause(1000)?;
-            }
-            let ids: Vec<Value> = batch.iter().map(|a| serde_json::json!({ "appid": a })).collect();
             // The best purchase option (price, sale and its end date) comes with any request; asking
             // for every purchase option as well would triple the size for nothing Depiled uses.
-            let input = serde_json::json!({
-                "ids": ids,
-                "context": { "language": "english", "country_code": cache.country },
-                "data_request": { "include_reviews": true, "include_release": true }
-            });
-            let mut resp = agent
-                .get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/")
-                .query("input_json", input.to_string())
-                .call()
-                .context("couldn't reach the Steam store")?;
-            let sent = sent_size(&resp);
-            let text = resp.body_mut().with_config().limit(16 * 1024 * 1024).read_to_string()?;
-            count_text(sent, &text);
+            let input = serde_json::to_string(&ItemsQuery {
+                ids: batch.iter().map(|&appid| ItemId { appid }).collect(),
+                context: ItemsContext { language: "english", country_code: &cache.country },
+                data_request: ItemsRequest { include_reviews: true, include_release: true },
+            })?;
+            let mut resp = pace.send("the Steam store", || agent.get("https://api.steampowered.com/IStoreBrowseService/GetItems/v1/").query("input_json", &input).call())?;
+            ok(&resp, "the Steam store")?;
+            let text = read_text(&mut resp, 16 * 1024 * 1024)?;
             apply_store_batch(&mut cache, batch, &text, now)?;
             if i % SAVE_EVERY == SAVE_EVERY - 1 {
                 save(STORE_FILE, &cache)?;
@@ -541,57 +840,92 @@ pub fn proton_due(cache: &BTreeMap<u32, Proton>, appids: &[u32], now: u64, force
         .collect()
 }
 
-pub fn refresh_proton(appids: &[u32], now: u64, progress: &mut dyn FnMut(usize, usize)) -> Result<usize> {
-    let mut cache: BTreeMap<u32, Proton> = load(PROTON_FILE);
-    let agent = agent();
-    // Persist the partial batch on cancellation and on transport errors.
-    let result = (|| -> Result<()> {
-        for (i, appid) in appids.iter().enumerate() {
-            check_cancel()?;
-            if i > 0 {
-                pause(300)?;
-            }
-            let known = cache.get(appid).filter(|p| !p.etag.is_empty());
-            let mut req = agent.get(&format!("https://www.protondb.com/api/v1/reports/summaries/{appid}.json"));
-            if let Some(p) = known {
-                req = req.header("If-None-Match", &p.etag);
-            }
-            let entry = match req.call() {
-                Ok(resp) if resp.status() == 304 => {
-                    count(None, 0, 1);
-                    Proton { fetched: now, ..known.cloned().unwrap_or_default() }
-                }
-                Ok(mut resp) => {
-                    let sent = sent_size(&resp);
-                    let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
-                    let text = resp.body_mut().read_to_string().context("reading the ProtonDB response")?;
-                    count_text(sent, &text);
-                    let v: Value = serde_json::from_str(&text).context("invalid ProtonDB response")?;
-                    Proton {
-                        tier: v.get("tier").and_then(Value::as_str).context("missing ProtonDB tier")?.to_owned(),
-                        reports: v.get("total").and_then(Value::as_u64).unwrap_or(0) as u32,
-                        fetched: now,
-                        etag,
-                    }
-                }
-                // No reports for this game: ProtonDB answers 404.
-                Err(ureq::Error::StatusCode(404)) => {
-                    count(None, 0, 1);
-                    Proton { fetched: now, ..Proton::default() }
-                }
-                Err(e) => return Err(anyhow::anyhow!("couldn't reach ProtonDB: {e}")),
-            };
-            cache.insert(*appid, entry);
-            if i % 25 == 24 {
-                save(PROTON_FILE, &cache)?;
-            }
-            progress(i + 1, appids.len());
+/// Ratings are looked up this many at a time. Each is a tiny file from ProtonDB's CDN, so the
+/// time goes on the round trip, not the transfer; starts are still spaced by the shared pace.
+const PROTON_AT_ONCE: usize = 4;
+/// Least time between the starts of two lookups, across all of them.
+const PROTON_GAP_MS: u64 = 150;
+
+#[derive(Deserialize)]
+struct ProtonSummary {
+    tier: String,
+    #[serde(default, deserialize_with = "num")]
+    total: u32,
+}
+
+fn fetch_proton(pace: &Pace, agent: &ureq::Agent, appid: u32, known: Option<Proton>, now: u64) -> Result<Proton> {
+    let url = format!("https://www.protondb.com/api/v1/reports/summaries/{appid}.json");
+    let mut resp = pace.send("ProtonDB", || {
+        let mut req = agent.get(&url);
+        if let Some(p) = &known {
+            req = req.header("If-None-Match", &p.etag);
         }
-        Ok(())
-    })();
-    save(PROTON_FILE, &cache)?;
-    result?;
-    Ok(appids.len())
+        req.call()
+    })?;
+    Ok(match resp.status().as_u16() {
+        304 => {
+            count(None, 0, 1);
+            Proton { fetched: now, ..known.unwrap_or_default() }
+        }
+        // No reports for this game.
+        404 => {
+            count(None, 0, 1);
+            Proton { fetched: now, ..Proton::default() }
+        }
+        _ => {
+            ok(&resp, "ProtonDB")?;
+            let etag = resp.headers().get("etag").and_then(|v| v.to_str().ok()).unwrap_or_default().to_owned();
+            let text = read_text(&mut resp, 1024 * 1024)?;
+            let summary: ProtonSummary = serde_json::from_str(&text).context("ProtonDB sent something unexpected")?;
+            Proton { tier: summary.tier, reports: summary.total, fetched: now, etag }
+        }
+    })
+}
+
+pub fn refresh_proton(appids: &[u32], now: u64, progress: &mut (dyn FnMut(usize, usize) + Send)) -> Result<usize> {
+    let cache: Mutex<BTreeMap<u32, Proton>> = Mutex::new(load(PROTON_FILE));
+    let agent = agent();
+    let pace = Pace::new(PROTON_GAP_MS);
+    let next = AtomicUsize::new(0);
+    let done = AtomicUsize::new(0);
+    let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
+    let progress = Mutex::new(progress);
+    std::thread::scope(|scope| {
+        for _ in 0..PROTON_AT_ONCE.min(appids.len()) {
+            scope.spawn(|| {
+                // Each worker takes the next game until none are left, or one fails or is
+                // stopped, which ends the others after their lookup in flight.
+                while lock(&failed).is_none() {
+                    let Some(&appid) = appids.get(next.fetch_add(1, Ordering::Relaxed)) else { break };
+                    let known = lock(&cache).get(&appid).filter(|p| !p.etag.is_empty()).cloned();
+                    let entry = match fetch_proton(&pace, &agent, appid, known, now) {
+                        Ok(entry) => entry,
+                        Err(e) => {
+                            lock(&failed).get_or_insert(e);
+                            break;
+                        }
+                    };
+                    let n = done.fetch_add(1, Ordering::Relaxed) + 1;
+                    {
+                        let mut cache = lock(&cache);
+                        cache.insert(appid, entry);
+                        // Saved as it goes, so a stop or a crash keeps what was fetched.
+                        if n.is_multiple_of(25)
+                            && let Err(e) = save(PROTON_FILE, &*cache)
+                        {
+                            lock(&failed).get_or_insert(e);
+                        }
+                    }
+                    (*lock(&progress))(n, appids.len());
+                }
+            });
+        }
+    });
+    save(PROTON_FILE, &cache.into_inner().unwrap_or_else(PoisonError::into_inner))?;
+    if let Some(e) = failed.into_inner().unwrap_or_else(PoisonError::into_inner) {
+        return Err(e);
+    }
+    Ok(done.into_inner())
 }
 
 #[cfg(test)]
@@ -632,7 +966,7 @@ mod tests {
         cache.games.insert(4, p(10, 10));
         cache.games.insert(5, p(5, 10));
         cache.games.insert(6, p(5, 10));
-        let h = |appid, last_played, playtime, known_total, local_at| AchievementHint { appid, last_played, playtime, known_total, local_at };
+        let h = |appid, last_played, playtime, known_total, local_at| AchievementHint { appid, last_played, playtime, known_total, local_at, change: 0 };
         let hints = [
             h(1, 500, 60, 10, 0),       // nothing new
             h(2, 500, 90, 10, 0),       // played on another computer: playtime grew
@@ -692,6 +1026,77 @@ mod tests {
         cache.switch_to("NL");
         assert_eq!(cache.apps[&1].price_cents, Some(999), "Dutch prices come straight back");
         assert_eq!(store_due(&cache, &[1], "US", 10, DAY, false), Vec::<u32>::new(), "and the US ones are still fresh");
+    }
+
+    #[test]
+    fn pacing_counts_the_time_a_request_took() {
+        let pace = Pace::new(80);
+        pace.wait().unwrap();
+        std::thread::sleep(Duration::from_millis(100)); // a slow answer, longer than the gap
+        let t = std::time::Instant::now();
+        pace.wait().unwrap();
+        assert!(t.elapsed() < Duration::from_millis(20), "no extra pause after a slow answer");
+        let t = std::time::Instant::now();
+        pace.wait().unwrap();
+        assert!(t.elapsed() >= Duration::from_millis(70), "back-to-back requests are still spaced");
+    }
+
+    fn answer(status: u16, retry_after: Option<&str>) -> Result<Response, ureq::Error> {
+        let mut b = ureq::http::Response::builder().status(status);
+        if let Some(s) = retry_after {
+            b = b.header("retry-after", s);
+        }
+        Ok(b.body(ureq::Body::builder().data("")).unwrap())
+    }
+
+    #[test]
+    fn passing_failures_are_tried_again_and_others_are_not() {
+        let pace = Pace::new(0);
+        // Too many requests, then a server error, then it works: three tries.
+        let mut tries = 0;
+        let replies = [429, 502, 200];
+        let resp = pace.send("site", || {
+            tries += 1;
+            answer(replies[tries - 1], Some("0"))
+        });
+        assert_eq!((resp.unwrap().status().as_u16(), tries), (200, 3));
+        assert_eq!(lock(&pace.slot).0, Duration::ZERO, "doubling nothing is still nothing");
+
+        // A 404 is an answer, not something to retry.
+        let mut tries = 0;
+        let resp = pace.send("site", || {
+            tries += 1;
+            answer(404, None)
+        });
+        assert_eq!((resp.unwrap().status().as_u16(), tries), (404, 1));
+
+        // Three failures in a row give up with the last one.
+        let mut tries = 0;
+        let err = pace.send("site", || {
+            tries += 1;
+            answer(503, Some("0"))
+        });
+        assert_eq!(tries, 3);
+        assert!(err.unwrap_err().to_string().contains("503"));
+    }
+
+    #[test]
+    fn too_many_requests_slows_the_rest_of_the_run() {
+        let pace = Pace::new(100);
+        let mut first = true;
+        pace.send("site", || if std::mem::take(&mut first) { answer(429, Some("0")) } else { answer(200, None) }).unwrap();
+        assert_eq!(lock(&pace.slot).0, Duration::from_millis(200));
+    }
+
+    #[test]
+    fn numbers_are_read_however_they_are_sent() {
+        let text = r#"{"response":{"store_items":[{"appid":"620","best_purchase_option":{"final_price_in_cents":999,"discount_pct":"25","active_discounts":[{"discount_end_date":{}}]},"reviews":{"summary_filtered":{"review_count":-1}}}]}}"#;
+        let items = parse_store_items(text, 1).unwrap();
+        let (appid, info) = &items[0];
+        assert_eq!((*appid, info.price_cents, info.discount, info.discount_ends, info.review_count), (620, Some(999), 25, 0, 0));
+        assert!(parse_store_items(r#"{"response":{}}"#, 1).unwrap().is_empty());
+        assert!(parse_store_items(r#"{"response":{"error":"busy"}}"#, 1).is_err());
+        assert!(parse_store_items(r#"{}"#, 1).is_err());
     }
 
     #[test]

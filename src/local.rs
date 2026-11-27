@@ -171,6 +171,7 @@ pub fn library(install: &SteamInstall, in_collections: &BTreeSet<u32>) -> Result
                 extras: app.extras,
                 installed_bytes: sizes.get(&appid).copied().unwrap_or(0),
                 family: family.contains(&appid) && !owned.contains(&appid),
+                change: app.change,
                 online: crate::model::Online::default(),
             })
         })

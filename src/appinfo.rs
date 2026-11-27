@@ -58,6 +58,9 @@ pub struct AppInfo {
     /// Free to play, so it shows in the library once launched even without a license.
     pub free: bool,
     pub extras: Extras,
+    /// Steam's change number for the app's info. It goes up whenever the store page, a branch
+    /// or a depot changes, so an unchanged number means nothing about the game has.
+    pub change: u32,
 }
 
 /// Store details used for filters. Zero means unknown.
@@ -121,10 +124,11 @@ pub fn parse(data: &[u8]) -> Result<HashMap<u32, AppInfo>> {
         let end = start.checked_add(size).filter(|&e| e <= data.len()).context("app entry runs past the end")?;
         // info state, last updated, access token, sha1, change number, binary sha1
         let header = 4 + 4 + 8 + 20 + 4 + if magic == V27 { 0 } else { 20 };
+        let change = data.get(start + 36..start + 40).map_or(0, |b| u32::from_le_bytes([b[0], b[1], b[2], b[3]]));
         let mut kv = BinaryReader { data: &data[start + header..end], pos: 0, strings: table.as_deref() };
         if let Ok(items) = kv.object() {
             let root = Value::Obj(items);
-            if let Some(info) = extract(appid, &root) {
+            if let Some(info) = extract(appid, &root).map(|info| AppInfo { change, ..info }) {
                 apps.insert(appid, info);
             }
         }
@@ -181,5 +185,6 @@ fn extract(appid: u32, root: &Value) -> Option<AppInfo> {
         publishers,
         free: [app.path(&["extended", "isfreeapp"]), common.get("isfreeapp")].into_iter().any(|v| v.and_then(Value::as_i64) == Some(1)),
         extras,
+        change: 0,
     })
 }

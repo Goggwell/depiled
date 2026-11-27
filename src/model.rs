@@ -69,6 +69,9 @@ pub struct Game {
     /// Lent by someone in the account's Steam Family rather than owned.
     #[serde(default)]
     pub family: bool,
+    /// Steam's change number for the game's info (see `AppInfo::change`), 0 if unknown.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub change: u32,
     /// Details fetched online (when switched on), for rules and filters.
     #[serde(default)]
     pub online: Online,
@@ -87,6 +90,10 @@ pub struct Online {
     pub perfect_minutes: u32,
     /// Number of achievements according to SteamHunters.
     pub achievements: u32,
+}
+
+fn is_zero(n: &u32) -> bool {
+    *n == 0
 }
 
 fn game_kind() -> String {
@@ -113,6 +120,7 @@ impl Default for Game {
             extras: crate::appinfo::Extras::default(),
             installed_bytes: 0,
             family: false,
+            change: 0,
             online: Online::default(),
         }
     }

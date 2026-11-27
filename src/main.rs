@@ -403,7 +403,7 @@ fn main() -> Result<()> {
                 if done == total || done % 50 == 0 {
                     println!("{task}: {done}/{total}");
                 }
-            });
+            }, &|| {});
             println!("Took {:.0?}.", started.elapsed());
             for e in errors {
                 println!("Problem: {e}");
