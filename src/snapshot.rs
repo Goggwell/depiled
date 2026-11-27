@@ -11,7 +11,7 @@ pub fn now_secs() -> u64 {
 
 /// Root folder for snapshots, outside Steam's own directories.
 pub fn store_dir() -> Result<PathBuf> {
-    Ok(crate::config::dir()?.join("snapshots"))
+    Ok(crate::config::account_dir()?.join("snapshots"))
 }
 
 /// Saves a snapshot to disk before any change is made.

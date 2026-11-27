@@ -1,4 +1,6 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU32, Ordering};
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -97,8 +99,97 @@ pub fn dir() -> Result<PathBuf> {
     Ok(dir)
 }
 
+// ---- one folder per Steam account ------------------------------------------------------
+
+/// Files that belong to one Steam account: unsaved changes, history, rules, collection colours
+/// and achievement progress. Settings and the shared online caches (prices, ratings, completion
+/// times) stay at the top, since they're the same whoever is signed in.
+const ACCOUNT_FILES: [&str; 7] = ["draft.json", "colors.json", "smart-collections.json", "config.toml", "config-backups", "snapshots", "profile-achievements.json"];
+
+/// The account the app is working on, 0 until a session or command picks one.
+static ACCOUNT: AtomicU32 = AtomicU32::new(0);
+
+/// Points the account's files at `account_id`. The session does this when it opens.
+pub fn use_account(account_id: u32) {
+    ACCOUNT.store(account_id, Ordering::Relaxed);
+}
+
+/// Where the current account's own files are.
+pub fn account_dir() -> Result<PathBuf> {
+    let mut id = ACCOUNT.load(Ordering::Relaxed);
+    if id == 0 {
+        id = crate::steam::SteamInstall::detect()?.account_id;
+        use_account(id);
+    }
+    dir_for(id)
+}
+
+/// Where one account's own files are. Files left at the top by older versions, which only
+/// knew one account, are first moved to the account they were made for.
+pub fn dir_for(account_id: u32) -> Result<PathBuf> {
+    static MOVED: std::sync::Once = std::sync::Once::new();
+    let dir = dir()?;
+    MOVED.call_once(|| {
+        if let Err(e) = move_legacy(&dir) {
+            eprintln!("couldn't move older files into an account folder: {e:#}");
+        }
+    });
+    Ok(dir.join("accounts").join(account_id.to_string()))
+}
+
+fn move_legacy(dir: &Path) -> Result<()> {
+    let legacy: Vec<PathBuf> = ACCOUNT_FILES.iter().map(|n| dir.join(n)).filter(|p| p.exists()).collect();
+    if legacy.is_empty() {
+        return Ok(());
+    }
+    let steam = crate::steam::SteamInstall::detect()?.dir;
+    let accounts = crate::steam::accounts(&steam);
+    let owner = owner_of_legacy(dir, &steam, &accounts).context("no Steam account to give the older files to")?;
+    let target = dir.join("accounts").join(owner.to_string());
+    std::fs::create_dir_all(&target)?;
+    for from in legacy {
+        let to = target.join(from.file_name().context("no file name")?);
+        if !to.exists() {
+            std::fs::rename(&from, &to).with_context(|| format!("moving {}", from.display()))?;
+        }
+    }
+    Ok(())
+}
+
+/// Which account older files were made for: the one whose Steam collections they mention most.
+/// Collection ids are random, so a match is no accident. Without any match, the account whose
+/// folder Steam wrote to last, which is how older versions chose.
+pub(crate) fn owner_of_legacy(dir: &Path, steam: &Path, accounts: &[crate::steam::Account]) -> Option<u32> {
+    use crate::model::{Collection, Snapshot};
+    #[derive(Deserialize, Default)]
+    struct Draft {
+        #[serde(default)]
+        base: Vec<Collection>,
+        #[serde(default)]
+        draft: Vec<Collection>,
+    }
+    let read = |p: PathBuf| std::fs::read_to_string(p).ok();
+    let mut mentioned: BTreeSet<String> = BTreeSet::new();
+    if let Some(d) = read(dir.join("draft.json")).and_then(|t| serde_json::from_str::<Draft>(&t).ok()) {
+        mentioned.extend(d.base.into_iter().chain(d.draft).map(|c| c.id));
+    }
+    if let Some(c) = read(dir.join("colors.json")).and_then(|t| serde_json::from_str::<BTreeMap<String, String>>(&t).ok()) {
+        mentioned.extend(c.into_keys());
+    }
+    let newest_snapshot = std::fs::read_dir(dir.join("snapshots")).into_iter().flatten().flatten().map(|e| e.path()).filter(|p| p.is_dir()).max();
+    if let Some(s) = newest_snapshot.and_then(|p| read(p.join("collections.json"))).and_then(|t| serde_json::from_str::<Snapshot>(&t).ok()) {
+        mentioned.extend(s.collections.into_iter().map(|c| c.id));
+    }
+    let score = |id: u32| {
+        let install = crate::steam::SteamInstall { dir: steam.to_path_buf(), account_id: id };
+        crate::catalog::Catalog::read(&install).map_or(0, |cat| cat.collections().iter().filter(|c| mentioned.contains(&c.id)).count())
+    };
+    let best = accounts.iter().map(|a| (score(a.id), a.id)).filter(|(s, _)| *s > 0).max_by_key(|(s, _)| *s);
+    best.map(|(_, id)| id).or_else(|| accounts.iter().max_by_key(|a| a.touched).map(|a| a.id))
+}
+
 pub fn path() -> Result<PathBuf> {
-    Ok(dir()?.join("config.toml"))
+    Ok(account_dir()?.join("config.toml"))
 }
 
 /// Loads the config, writing the default one first if this is a fresh install.
@@ -127,7 +218,7 @@ pub fn replace_with_backup(new_text: &str) -> Result<()> {
     Config::parse(new_text)?;
     let path = path()?;
     if let Ok(old) = std::fs::read_to_string(&path) {
-        let backups = dir()?.join("config-backups");
+        let backups = account_dir()?.join("config-backups");
         std::fs::create_dir_all(&backups)?;
         std::fs::write(backups.join(format!("config-{}.toml", snapshot::now_secs())), old)?;
         snapshot::prune(&backups, 20)?;

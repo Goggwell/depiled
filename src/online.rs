@@ -8,7 +8,7 @@
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Mutex, MutexGuard, PoisonError};
 use std::time::{Duration, Instant};
@@ -255,7 +255,11 @@ pub fn load<T: DeserializeOwned + Default>(name: &str) -> T {
 }
 
 pub fn save<T: Serialize>(name: &str, value: &T) -> Result<()> {
-    let path = path(name)?;
+    save_to(&path(name)?, value)
+}
+
+fn save_to<T: Serialize>(path: &Path, value: &T) -> Result<()> {
+    let path = path.to_path_buf();
     std::fs::create_dir_all(path.parent().context("no parent")?)?;
     let tmp = path.with_extension("tmp");
     std::fs::write(&tmp, serde_json::to_vec(value)?)?;
@@ -315,7 +319,21 @@ pub fn record_usage(now: u64) -> Result<Usage> {
 
 // ---- achievements from the public profile ---------------------------------------------------
 
-pub const ACHIEVEMENTS_FILE: &str = "profile-achievements.json";
+const ACHIEVEMENTS_FILE: &str = "profile-achievements.json";
+
+fn achievements_path(steam64: u64) -> Result<PathBuf> {
+    let account_id = u32::try_from(steam64.saturating_sub(crate::steam::STEAM64_BASE)).context("not a Steam account id")?;
+    Ok(config::dir_for(account_id)?.join(ACHIEVEMENTS_FILE))
+}
+
+/// The achievement progress read from one account's profile.
+pub fn load_achievements(steam64: u64) -> AchievementCache {
+    achievements_path(steam64).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+fn save_achievements(steam64: u64, cache: &AchievementCache) -> Result<()> {
+    save_to(&achievements_path(steam64)?, cache)
+}
 
 #[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Progress {
@@ -502,7 +520,7 @@ mod page {
 
 /// Fetches achievement progress for `appids` from the user's public profile, one page per game.
 pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, progress: &mut dyn FnMut(usize, usize)) -> Result<usize> {
-    let mut cache: AchievementCache = load(ACHIEVEMENTS_FILE);
+    let mut cache = load_achievements(steam64);
     let agent = agent();
     let mut misses = 0;
     let pace = Pace::new(1200);
@@ -536,14 +554,14 @@ pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, p
                 }
             }
             if i % 5 == 4 {
-                save(ACHIEVEMENTS_FILE, &cache)?;
+                save_achievements(steam64, &cache)?;
             }
             progress(i + 1, games.len());
         }
         cache.checked = now;
         Ok(())
     })();
-    save(ACHIEVEMENTS_FILE, &cache)?;
+    save_achievements(steam64, &cache)?;
     result?;
     Ok(games.len())
 }

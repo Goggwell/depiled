@@ -33,6 +33,8 @@ pub enum Event {
     Pending { ops: Vec<OpView>, notes: Vec<String> },
     /// The rules' changes were put in the draft, and saved if Steam was closed.
     Organized { applied: usize, saved: bool, snapshot: Option<String> },
+    /// A different Steam account signed in, and Depiled now shows its library.
+    Account { account: u32 },
 }
 /// Decides when a re-check is due. Pure, so the timing rules are easy to test.
 pub struct Tracker {
@@ -120,6 +122,13 @@ fn tick(session: &Mutex<Option<Session>>, mode: Automation, state: &mut State, e
     }
 
     let mut guard = session.lock().map_err(|_| anyhow::anyhow!("session lock poisoned"))?;
+    if guard.as_ref().is_some_and(|s| s.install.account_id != install.account_id) {
+        // Each account's unsaved changes are kept in its own folder, so nothing is lost.
+        *guard = Some(Session::open()?);
+        state.announced = None;
+        emit(Event::Account { account: install.account_id });
+        return Ok(());
+    }
     let Some(s) = guard.as_mut() else { return Ok(()) };
     if due {
         s.reload()?;

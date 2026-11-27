@@ -65,6 +65,12 @@ enum Command {
     Automation { mode: Option<String> },
     /// Watch Steam and organize by the automation setting (Ctrl+C to stop)
     Watch,
+    /// List the Steam accounts on this computer, or choose which one to work on
+    Accounts {
+        /// An account id, sign-in name or profile name; "auto" follows whoever is signed in to Steam
+        #[arg(long = "use")]
+        pick: Option<String>,
+    },
     /// Download the online extras that are due: completion times, prices,
     /// achievement progress and ProtonDB ratings
     Online {
@@ -361,6 +367,34 @@ fn main() -> Result<()> {
                 }
             }
         },
+        Command::Accounts { pick } => {
+            let dir = depiled::steam::SteamInstall::detect()?.dir;
+            if let Some(pick) = pick {
+                let mut settings = service::get_settings()?;
+                settings.account = if pick.eq_ignore_ascii_case("auto") {
+                    None
+                } else {
+                    let found = depiled::steam::accounts(&dir).into_iter().find(|a| a.id.to_string() == pick || a.login.eq_ignore_ascii_case(&pick) || a.name.eq_ignore_ascii_case(&pick));
+                    Some(found.with_context(|| format!("no account '{pick}' on this computer; run `depiled accounts` to list them"))?.id)
+                };
+                service::set_settings(&settings)?;
+            }
+            let current = depiled::steam::SteamInstall::detect()?.account_id;
+            let view = service::accounts(current)?;
+            for a in &view.accounts {
+                let mut notes = Vec::new();
+                if Some(a.id) == view.signed_in {
+                    notes.push("signed in to Steam".to_owned());
+                }
+                if a.pending > 0 {
+                    notes.push(format!("{} unsaved", a.pending));
+                }
+                let mark = if a.id == current { "*" } else { " " };
+                let name = if a.name.is_empty() { "(no name)" } else { &a.name };
+                println!("{mark} {name}  {}  id {}{}", a.login, a.id, if notes.is_empty() { String::new() } else { format!("  ({})", notes.join(", ")) });
+            }
+            println!("{}", if view.picked.is_some() { "Working on the account marked *. `--use auto` follows Steam instead." } else { "Following whoever is signed in to Steam." });
+        }
         Command::Automation { mode } => {
             let mut settings = service::get_settings()?;
             if let Some(mode) = mode {
@@ -390,6 +424,7 @@ fn main() -> Result<()> {
                 depiled::watcher::Event::Organized { applied, saved, .. } => {
                     println!("Organized automatically: {applied} changes{}", if saved { ", saved" } else { ", will save when Steam closes" });
                 }
+                depiled::watcher::Event::Account { account } => println!("Another account signed in to Steam; now working on {account}."),
             });
         }
         Command::Online { country, all } => {

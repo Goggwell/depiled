@@ -251,7 +251,7 @@ pub fn tag_names() -> BTreeMap<u32, String> {
 }
 
 fn colors_path() -> Result<PathBuf> {
-    Ok(config::dir()?.join("colors.json"))
+    Ok(config::account_dir()?.join("colors.json"))
 }
 
 fn load_colors() -> BTreeMap<String, String> {
@@ -279,7 +279,7 @@ struct SavedDraft {
 }
 
 fn draft_path() -> Result<PathBuf> {
-    Ok(config::dir()?.join("draft.json"))
+    Ok(config::account_dir()?.join("draft.json"))
 }
 
 /// Replays the changes between `old_base` and `draft` on top of `current`. Used when Steam's
@@ -329,6 +329,8 @@ pub struct SaveReport {
 impl Session {
     pub fn open() -> Result<Self> {
         let install = SteamInstall::detect().context("Steam isn't installed, or hasn't been signed in to on this computer")?;
+        // Unsaved changes, history and rules are kept per account.
+        config::use_account(install.account_id);
         let mut s = Self {
             install,
             games: Vec::new(),
@@ -400,7 +402,7 @@ impl Session {
     /// Lays the cached online data over the games read from Steam's files.
     fn overlay_online(&mut self) {
         let hunted = hunters::load();
-        let profile: online::AchievementCache = online::load(online::ACHIEVEMENTS_FILE);
+        let profile: online::AchievementCache = online::load_achievements(self.install.steam64());
         for g in &mut self.games {
             // Whichever is newer wins: the profile page, or what Steam wrote to disk after a
             // play session or after the game's page was opened in the library.
@@ -1004,7 +1006,7 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
         }
     }
     if s.online_achievements {
-        let cache: online::AchievementCache = online::load(online::ACHIEVEMENTS_FILE);
+        let cache: online::AchievementCache = online::load_achievements(job.steam64);
         // Counts SteamHunters just reported, so an update that added achievements is caught in
         // this run rather than the next.
         let hunted = hunters::load();
@@ -1074,6 +1076,49 @@ fn same(a: &[Collection], b: &[Collection]) -> bool {
         cols.iter().map(|c| (c.id.clone(), (c.name.clone(), c.apps.iter().copied().collect(), c.dynamic))).collect()
     };
     key(a) == key(b)
+}
+
+// ---- accounts -------------------------------------------------------------------------------
+
+#[derive(Debug, Serialize)]
+pub struct AccountView {
+    pub id: u32,
+    pub name: String,
+    pub login: String,
+    /// Steam's cached profile picture, if it has one.
+    pub avatar: Option<String>,
+    /// Changes made in Depiled for this account that aren't in Steam yet.
+    pub pending: usize,
+}
+
+#[derive(Debug, Serialize)]
+pub struct Accounts {
+    pub accounts: Vec<AccountView>,
+    /// The account being shown.
+    pub current: u32,
+    /// The account the user picked; `None` follows whoever is signed in to Steam.
+    pub picked: Option<u32>,
+    /// Signed in to Steam right now.
+    pub signed_in: Option<u32>,
+}
+
+/// The Steam accounts on this computer, most recently used first, and which one is shown.
+pub fn accounts(current: u32) -> Result<Accounts> {
+    let dir = SteamInstall::detect()?.dir;
+    let accounts = steam::accounts(&dir)
+        .into_iter()
+        .map(|a| {
+            let saved: Option<SavedDraft> = config::dir_for(a.id).ok().and_then(|d| std::fs::read_to_string(d.join("draft.json")).ok()).and_then(|t| serde_json::from_str(&t).ok());
+            AccountView {
+                pending: saved.map_or(0, |s| ops::plan_restore_exact(&s.base, &s.draft).len()),
+                avatar: a.avatar.map(|p| p.to_string_lossy().into_owned()),
+                id: a.id,
+                name: a.name,
+                login: a.login,
+            }
+        })
+        .collect();
+    Ok(Accounts { accounts, current, picked: crate::settings::load()?.account, signed_in: steam::signed_in(&dir) })
 }
 
 pub fn get_settings() -> Result<crate::settings::Settings> {

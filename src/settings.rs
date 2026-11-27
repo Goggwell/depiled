@@ -58,6 +58,9 @@ pub struct Settings {
     pub check_updates: bool,
     #[serde(default)]
     pub update_channel: Channel,
+    /// The Steam account to show, by account id. `None` follows whoever is signed in to Steam.
+    #[serde(default)]
+    pub account: Option<u32>,
 }
 
 fn yes() -> bool {
@@ -77,6 +80,7 @@ impl Default for Settings {
             reopen_steam: true,
             check_updates: true,
             update_channel: Channel::Stable,
+            account: None,
         }
     }
 }

@@ -180,6 +180,27 @@ export interface Settings {
   check_updates: boolean;
   /** Numbered releases, or the newest build of the main branch. */
   update_channel: 'stable' | 'nightly';
+  /** The Steam account to show; null follows whoever is signed in to Steam. */
+  account: number | null;
+}
+
+/** A Steam account used on this computer. */
+export interface AccountView {
+  id: number;
+  name: string;
+  login: string;
+  /** Steam's cached profile picture. */
+  avatar: string | null;
+  /** Changes made for this account that aren't in Steam yet. */
+  pending: number;
+}
+
+export interface Accounts {
+  accounts: AccountView[];
+  current: number;
+  /** Null when following Steam's sign-in. */
+  picked: number | null;
+  signed_in: number | null;
 }
 
 /** A newer version, found by `checkUpdate`. */
@@ -198,7 +219,8 @@ export interface UpdateProgress {
 export type OrganizerEvent =
   | { type: 'changed'; steam_running: boolean }
   | { type: 'pending'; ops: OpView[]; notes: string[] }
-  | { type: 'organized'; applied: number; saved: boolean; snapshot: string | null };
+  | { type: 'organized'; applied: number; saved: boolean; snapshot: string | null }
+  | { type: 'account'; account: number };
 
 
 export interface OpView {
@@ -280,6 +302,10 @@ export const applyRules = () => call<Patch>('apply_rules');
 export const refreshOnline = (country: string, force = false) => call<boolean>('refresh_online', { country, force });
 /** Stops the refresh after the request in flight; what was fetched is kept. */
 export const stopOnline = () => call<void>('stop_online');
+
+export const accounts = () => call<Accounts>('accounts');
+/** Shows another account's library, or (null) whoever is signed in to Steam. */
+export const setAccount = (account: number | null) => call<void>('set_account', { account });
 
 /** Asks GitHub for a newer build on the channel. Null when this is the newest. */
 export const checkUpdate = (nightly: boolean) => call<UpdateInfo | null>('check_update', { nightly });

@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use depiled::service::{self, CollectionView, DraftState, Library, OpView, SaveReport, Session, SnapshotInfo, Status};
+use depiled::service::{self, Accounts, CollectionView, DraftState, Library, OpView, SaveReport, Session, SnapshotInfo, Status};
 use depiled::settings::Settings;
 use depiled::smart::SmartRule;
 use depiled::steam::SteamInstall;
@@ -295,6 +295,29 @@ async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country
     });
     Ok(true)
 }
+// ---- accounts -----------------------------------------------------------------------------
+
+#[tauri::command]
+async fn accounts(state: State<'_, Shared>) -> Res<Accounts> {
+    with(state, |s| service::accounts(s.install.account_id)).await
+}
+
+/// Shows another account's library, or (with `None`) whoever is signed in to Steam. The open
+/// account's unsaved changes stay in its folder until it's shown again.
+#[tauri::command]
+async fn set_account(state: State<'_, Shared>, account: Option<u32>) -> Res<()> {
+    let shared = state.inner().clone();
+    blocking(move || {
+        let mut settings = depiled::settings::load()?;
+        settings.account = account;
+        depiled::settings::save(&settings)?;
+        let mut guard = shared.lock().map_err(|_| anyhow::anyhow!("the app's state is unavailable, restart it"))?;
+        *guard = Some(Session::open()?);
+        Ok(())
+    })
+    .await
+}
+
 // ---- updates ------------------------------------------------------------------------------
 
 /// The update found by the last check, kept until it's installed.
@@ -388,6 +411,8 @@ pub fn run() {
             if let Ok(install) = SteamInstall::detect() {
                 let covers = install.dir.join("appcache").join("librarycache");
                 app.asset_protocol_scope().allow_directory(covers, true)?;
+                // And the accounts' profile pictures, for the account switcher.
+                app.asset_protocol_scope().allow_directory(install.dir.join("config").join("avatarcache"), false)?;
             }
 
             // Watch Steam's files in the background. The window hears about it through an
@@ -431,6 +456,8 @@ pub fn run() {
             stop_online,
             check_update,
             install_update,
+            accounts,
+            set_account,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

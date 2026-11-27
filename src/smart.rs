@@ -69,7 +69,7 @@ impl SmartRule {
 }
 
 fn path() -> Result<PathBuf> {
-    Ok(config::dir()?.join("smart-collections.json"))
+    Ok(config::account_dir()?.join("smart-collections.json"))
 }
 
 /// Keyed by lower-cased collection name, like the rules file.

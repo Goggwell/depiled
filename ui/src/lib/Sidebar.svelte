@@ -2,6 +2,7 @@
   import { tick } from 'svelte';
   import type { Collection } from './api';
   import { app, COLORS, NO_COLOR, OTHER_KINDS } from './store.svelte';
+  import AccountSwitcher from './AccountSwitcher.svelte';
   import Icon from './Icon.svelte';
 
   let dropTarget = $state<string | null>(null);
@@ -160,6 +161,7 @@
   </nav>
 
   <div class="border-t border-base-300 p-3 text-xs leading-relaxed text-muted">Drag games onto a collection to add them. Hold Shift to move them out of the one you’re in.</div>
+  <AccountSwitcher />
 </aside>
 
 {#if menu && menuFor}

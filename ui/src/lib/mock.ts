@@ -123,7 +123,10 @@ let settings = {
   reopen_steam: true,
   check_updates: true,
   update_channel: 'stable',
+  account: null as number | null,
 };
+// Two invented accounts, so the switcher can be tried. The library doesn't change.
+let mockAccount = 1;
 let steamRunning = true;
 let stopRequested = false;
 
@@ -384,6 +387,20 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
     }
     case 'stop_online':
       stopRequested = true;
+      return r(undefined);
+    case 'accounts':
+      return r({
+        accounts: [
+          { id: 1, name: 'Sam', login: 'sam_plays', avatar: null, pending: 0 },
+          { id: 2, name: 'Sam (streaming)', login: 'sam_live', avatar: null, pending: 3 },
+        ],
+        current: mockAccount,
+        picked: settings.account,
+        signed_in: 1,
+      });
+    case 'set_account':
+      settings.account = args.account;
+      mockAccount = args.account ?? 1;
       return r(undefined);
     case 'check_update':
       return r({ version: '0.3.0', current: '0.2.1', notes: null });

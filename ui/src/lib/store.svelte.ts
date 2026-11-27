@@ -192,7 +192,11 @@ class AppStore {
     reopen_steam: true,
     check_updates: true,
     update_channel: 'stable',
+    account: null,
   });
+  /** The Steam accounts on this computer and which one is shown. */
+  accounts = $state.raw<api.Accounts | null>(null);
+  currentAccount = $derived(this.accounts?.accounts.find((a) => a.id === this.accounts?.current) ?? null);
   /** This build's version. */
   version = $state('');
   /** A newer version that was found, and how far its download is. */
@@ -371,6 +375,7 @@ class AppStore {
     }
     if (this.status.steam_found) {
       await this.refresh();
+      this.loadAccounts();
       this.refreshOnline();
     }
   }
@@ -421,6 +426,10 @@ class AppStore {
       // A new game, or one just played, gets its online details straight away.
       if (this.online) this.recheckOnline = true;
       else this.refreshOnline();
+    } else if (e.type === 'account') {
+      // Someone else signed in to Steam, and Depiled follows Steam's sign-in.
+      await this.afterAccountChange();
+      if (this.currentAccount) this.say(`${this.currentAccount.name || this.currentAccount.login} signed in to Steam, so this is their library now.`, false);
     } else if (e.type === 'pending') {
       this.pending = e.ops;
     } else {
@@ -468,6 +477,45 @@ class AppStore {
       this.fail(e);
     }
   }
+  // ---- accounts ----------------------------------------------------------------------
+
+  async loadAccounts() {
+    this.accounts = await api.accounts().catch(() => this.accounts);
+  }
+
+  /** Shows another account's library, or (null) whoever is signed in to Steam. Each account's
+   *  unsaved changes, history and rules stay with it. */
+  async switchAccount(account: number | null) {
+    if (this.busy || this.saving) return;
+    const before = this.currentAccount;
+    const pending = this.draft.pending;
+    this.busy = true;
+    try {
+      await api.setAccount(account);
+      this.settings = { ...this.settings, account };
+      await this.afterAccountChange();
+      if (pending && before && before.id !== this.currentAccount?.id) {
+        this.say(`${before.name || before.login}’s ${pending} unsaved ${pending === 1 ? 'change is' : 'changes are'} kept for when you switch back.`, false);
+      }
+    } catch (e) {
+      this.fail(e);
+    } finally {
+      this.busy = false;
+    }
+  }
+
+  private async afterAccountChange() {
+    this.pending = null;
+    this.selected = [];
+    this.view = 'all';
+    this.lastSaved = null;
+    await this.refresh();
+    await this.loadAccounts();
+    // The new account's achievement progress comes from its own profile.
+    if (this.online) this.recheckOnline = true;
+    else this.refreshOnline();
+  }
+
   // ---- updates -----------------------------------------------------------------------
 
   /** Looks for a newer version. An automatic check stays quiet when offline or up to date. */
