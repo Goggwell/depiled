@@ -5,6 +5,7 @@
   import AutomationBanner from './lib/AutomationBanner.svelte';
   import CrashReport from './lib/CrashReport.svelte';
   import Feedback from './lib/Feedback.svelte';
+  import LongFetch from './lib/LongFetch.svelte';
   import Presets from './lib/Presets.svelte';
   import CollectionBar from './lib/CollectionBar.svelte';
   import Details from './lib/Details.svelte';
@@ -49,6 +50,7 @@
   <NewCollection />
   <Settings />
   <Feedback />
+  <LongFetch />
   <Presets />
   {#if app.crash}
     <div class="modal modal-open" role="dialog" aria-label="Depiled closed unexpectedly">

@@ -45,6 +45,7 @@ const ICONS = {
   feedback: ['ChatCircleText'],
   sort: ['ArrowsDownUp'],
   up: ['ArrowUp'],
+  numbers: ['ListNumbers', 'bold'],
   down: ['ArrowDown'],
 };
 

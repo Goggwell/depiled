@@ -101,6 +101,8 @@ export interface Game {
   extras: Extras;
   /** Bytes on disk, 0 if not installed. */
   installed_bytes: number;
+  /** Roughly what installing it downloads, from Steam's own app data. 0 if unknown. */
+  download_bytes: number;
   /** Lent by someone in the user's Steam Family. */
   family: boolean;
   /** Has screenshots, taken on this computer or uploaded to the profile. */
@@ -327,7 +329,16 @@ export const restoreSnapshot = (id: string) => call<Patch>('restore_snapshot', {
 export const previewRules = () => call<{ ops: OpView[]; notes: string[] }>('preview_rules');
 export const applyRules = () => call<Patch>('apply_rules');
 /** Starts a background refresh of whatever online extras are due. False if one is running. */
-export const refreshOnline = (country: string, force = false) => call<boolean>('refresh_online', { country, force });
+/** What a refresh is about to fetch, worked out before it starts. */
+export interface OnlinePlan {
+  requests: number;
+  /** A rough estimate. */
+  seconds: number;
+  games: number;
+}
+
+/** Starts a refresh; null if one is already running or online details are off. */
+export const refreshOnline = (country: string, force = false) => call<OnlinePlan | null>('refresh_online', { country, force });
 /** Stops the refresh after the request in flight; what was fetched is kept. */
 export const stopOnline = () => call<void>('stop_online');
 

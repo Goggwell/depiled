@@ -87,7 +87,10 @@
   {#each items as item, i (i)}
     {#if 'field' in item}
       {@const f = fieldById(item.field)}
-      <div class="flex flex-wrap items-center gap-2">
+      <!-- The controls wrap as needed; the remove button keeps its own column at the right,
+           level with the first line. -->
+      <div class="flex items-start gap-2">
+      <div class="flex min-w-0 flex-1 flex-wrap items-center gap-2">
         <select class="{ctl} w-52" value={item.field} onchange={(e) => setField(item, e.currentTarget.value)} aria-label="Filter">
           {#each groups as g}<optgroup label={g}>{#each FIELDS.filter((x) => x.group === g) as x}<option value={x.id}>{x.label}</option>{/each}</optgroup>{/each}
         </select>
@@ -124,7 +127,8 @@
             </button>
           {/each}
         {/if}
-        <button class="btn btn-ghost btn-sm btn-square ml-auto" aria-label="Remove" onclick={() => removeAt(i)}><Icon name="close" size={13} /></button>
+      </div>
+        <button class="btn btn-ghost btn-sm btn-square shrink-0" aria-label="Remove" onclick={() => removeAt(i)}><Icon name="close" size={13} /></button>
       </div>
     {:else}
       <RuleBuilder cond={item} depth={depth + 1} onremove={() => removeAt(i)} />

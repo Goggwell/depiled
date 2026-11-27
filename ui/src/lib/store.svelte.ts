@@ -96,6 +96,9 @@ const emptyDraft = (): DraftState => ({ pending: 0, changed: [], undo: null, red
 
 
 /** Text as search compares it: lower case, accents dropped, so "pokemon" finds "Pokémon". */
+/** A refresh expected to take longer than this gets a notice. */
+const LONG_FETCH_SECS = 5 * 60;
+
 export const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
 
 const searchTexts = new WeakMap<Game, string>();
@@ -123,6 +126,9 @@ class AppStore {
   savingClosesSteam = $state(false);
   /** The last save this session, shown in the status bar until the next change. */
   lastSaved = $state<{ changes: number; at: number; verified: boolean } | null>(null);
+  /** A refresh long enough to mention, shown in a notice until dismissed. */
+  longFetch = $state<api.OnlinePlan | null>(null);
+  private longFetchShown = false;
   /** The online refresh in progress, if any. */
   online = $state<OnlineProgress | null>(null);
   private recheckOnline = false;
@@ -506,8 +512,13 @@ class AppStore {
     this.online = { task: 'online details', done: 0, total: 0, finished: false, errors: [] };
     try {
       // Set pending before IPC: a cache-only worker can finish before invoke resolves.
-      const started = await api.refreshOnline(this.region, force);
-      if (!started && !this.settings.online_stats) this.online = null;
+      const plan = await api.refreshOnline(this.region, force);
+      if (!plan && !this.settings.online_stats) this.online = null;
+      // A long one (a big library's first fetch): say so, once per session.
+      if (plan && plan.seconds >= LONG_FETCH_SECS && !this.longFetchShown) {
+        this.longFetchShown = true;
+        this.longFetch = plan;
+      }
     } catch (e) {
       this.online = null;
       this.fail(e);

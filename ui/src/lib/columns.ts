@@ -68,7 +68,8 @@ export const COLUMNS: Column[] = [
     value: (g) => (g.achievements?.total ? g.achievements.unlocked / g.achievements.total : null),
   },
   { id: 'deck', label: 'Steam Deck', width: 96, desc: true, text: (g) => DECK[g.extras.deck], value: (g) => known(g.extras.deck) },
-  { id: 'size', label: 'Size', width: 78, desc: true, text: (g) => (g.installed_bytes ? fmtSize(g.installed_bytes) : '–'), value: (g) => known(g.installed_bytes) },
+  // Size on disk, or (marked ~) roughly what installing it would download.
+  { id: 'size', label: 'Size', width: 78, desc: true, text: (g) => (g.installed_bytes ? fmtSize(g.installed_bytes) : g.download_bytes ? `~${fmtSize(g.download_bytes)}` : '–'), value: (g) => known(g.installed_bytes || g.download_bytes) },
   { id: 'collections', label: 'Collections', width: 72, desc: true, text: (g) => String(g.collections.length), value: (g) => g.collections.length },
   { id: 'price', label: 'Price', width: 84, desc: false, text: (g) => g.store?.price_text ?? '–', value: (g) => g.store?.price_cents ?? null },
   { id: 'discount', label: 'Sale', width: 60, desc: true, text: (g) => (g.store?.discount ? `-${g.store.discount}%` : '–'), value: (g) => known(g.store?.discount ?? 0) },

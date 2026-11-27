@@ -79,7 +79,7 @@
       {#if game.metacritic}{@render fact('Metacritic', String(game.metacritic))}{/if}
       {@render fact('Steam Deck', DECK[game.extras.deck])}
       {@render fact('Runs on', platforms(game.extras.platforms))}
-      {@render fact('On disk', game.installed_bytes ? fmtSize(game.installed_bytes) : 'Not installed')}
+      {@render fact('On disk', game.installed_bytes ? fmtSize(game.installed_bytes) : game.download_bytes ? `Not installed (about ${fmtSize(game.download_bytes)})` : 'Not installed')}
       {@render fact('Screenshots', game.screenshots ? 'Yes' : 'None found')}
       {#if game.proton}{@render fact('ProtonDB', game.proton.charAt(0).toUpperCase() + game.proton.slice(1))}{/if}
     </dl>

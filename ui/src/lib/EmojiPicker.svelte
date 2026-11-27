@@ -95,7 +95,7 @@
       }
     }}
   >
-    <input bind:this={search} bind:value={query} type="search" class="input input-sm w-full" placeholder="Find an emoji, like trophy or cozy" aria-label="Find an emoji" />
+    <input bind:this={search} bind:value={query} type="search" class="input h-10 w-full text-sm" placeholder="Find an emoji, like trophy or cozy" aria-label="Find an emoji" />
     <div class="mt-1.5 min-h-0 flex-1 overflow-y-auto">
       {#each groups as g (g.name)}
         <p class="px-0.5 pb-0.5 pt-1.5 text-xs text-muted">{g.name}</p>

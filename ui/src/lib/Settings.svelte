@@ -105,14 +105,6 @@
           {/if}
         </section>
         <section class={section}>
-          <h3 class="font-semibold">Collection order</h3>
-          <label class="mt-2 flex cursor-pointer items-start gap-2.5">
-            <input type="checkbox" class="checkbox checkbox-xs mt-0.5" checked={app.ordered} disabled={app.busy || app.saving} onchange={(e) => app.setOrdering(e.currentTarget.checked)} />
-            <span>Keep my own order<span class="block text-muted">Steam always lists collections alphabetically, so Depiled puts a number in front of each name in Steam (01 Playing, 02 Backlog). In Depiled you see the plain names and drag them into the order you like. Turning this off takes the numbers away again. Either way it reaches Steam when you save.</span></span>
-          </label>
-        </section>
-
-        <section class={section}>
           <h3 class="mb-2 font-semibold">Appearance</h3>
           <div class="seg" role="group" aria-label="Appearance">
             {#each themes as [v, label]}

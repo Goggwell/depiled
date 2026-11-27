@@ -17,7 +17,7 @@ export interface Test {
 export type FieldId =
   | 'name' | 'developer' | 'publisher'
   | 'playtime_hours' | 'last_played_days' | 'release_year' | 'review_percent' | 'review_count' | 'metacritic'
-  | 'achievements' | 'achievements_unlocked' | 'achievement_percent' | 'perfect_hours' | 'price' | 'discount' | 'size_gb'
+  | 'achievements' | 'achievements_unlocked' | 'achievement_percent' | 'perfect_hours' | 'price' | 'discount' | 'size_gb' | 'download_gb'
   | 'played' | 'deck' | 'proton'
   | 'installed' | 'vr' | 'early_access' | 'family' | 'on_sale' | 'completed' | 'has_achievements' | 'has_screenshots'
   | 'tags' | 'features' | 'platforms' | 'collections';
@@ -60,6 +60,7 @@ export const FIELDS: Field[] = [
   { id: 'on_sale', label: 'On sale', type: 'bool', group: 'Store' },
   { id: 'installed', label: 'Installed', type: 'bool', group: 'This computer' },
   { id: 'size_gb', label: 'Size on disk', type: 'num', unit: 'GB', group: 'This computer' },
+  { id: 'download_gb', label: 'Download size', type: 'num', unit: 'GB', group: 'This computer' },
   { id: 'family', label: 'Family game', type: 'bool', group: 'This computer' },
   { id: 'collections', label: 'Collections', type: 'set', group: 'This computer' },
   { id: 'deck', label: 'Steam Deck', type: 'choice', group: 'Platforms', options: [['verified', 'Verified'], ['playable', 'Playable'], ['unsupported', 'Unsupported'], ['unknown', 'Unknown']] },
@@ -177,6 +178,7 @@ const READ: { [K in FieldId]: (g: Game, now: number) => unknown } = {
   price: (g) => (g.store?.price_cents != null ? g.store.price_cents / 100 : null),
   discount: (g) => g.store?.discount ?? 0,
   size_gb: (g) => pos(g.installed_bytes / 1073741824),
+  download_gb: (g) => pos((g.installed_bytes || g.download_bytes) / 1073741824),
   played: (g) => (g.playtime_minutes > 0 || g.last_played > 0 ? 'played' : 'never'),
   deck: (g) => DECK[Math.min(3, g.extras.deck)],
   proton: (g) => g.proton || 'none',

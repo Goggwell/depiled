@@ -99,7 +99,7 @@
       oninput={() => (active = 0)}
       onkeydown={keydown}
       type="search"
-      class="input input-sm w-full"
+      class="input h-10 w-full text-sm"
       placeholder="Type to find"
       aria-label={label}
       aria-controls="picker-list"

@@ -4,6 +4,7 @@
   import { app, COLORS, NO_COLOR, OTHER_KINDS } from './store.svelte';
   import AccountSwitcher from './AccountSwitcher.svelte';
   import EmojiPicker from './EmojiPicker.svelte';
+  import OrderToggle from './OrderToggle.svelte';
   import Icon from './Icon.svelte';
 
   let dropTarget = $state<string | null>(null);
@@ -86,6 +87,13 @@
   // The menu takes focus when it opens, arrow keys move through it, and Esc gives focus back
   // to the button that opened it.
   let menuEl = $state<HTMLDivElement>();
+  // Opens where it was asked for, then moves up as far as it needs to stay inside the window.
+  let menuTop = $state(0);
+  $effect(() => {
+    if (!menu) return;
+    menuTop = menu.y;
+    if (menuEl) menuTop = Math.max(8, Math.min(menu.y, window.innerHeight - menuEl.offsetHeight - 8));
+  });
   let opener: HTMLElement | null = null;
   $effect(() => {
     if (menu && menuEl) menuEl.querySelector<HTMLElement>('[role="menuitem"]')?.focus();
@@ -144,6 +152,7 @@
     <div class="mt-4 flex items-center justify-between pb-1 pl-2 pr-1">
       <span class="text-xs font-semibold text-muted">Collections</span>
       <span class="flex">
+        <OrderToggle />
         <button class="btn btn-ghost btn-xs btn-square" aria-label="Start from a preset" title="Start from a preset" onclick={() => (app.dialog = 'presets')}><Icon name="wand" size={14} /></button>
         <button class="btn btn-ghost btn-xs btn-square" aria-label="New collection" title="New collection" onclick={() => app.openNewCollection()}><Icon name="plus" size={14} /></button>
       </span>
@@ -215,8 +224,8 @@
 {#if menu && menuFor}
   <div
     bind:this={menuEl}
-    class="fixed z-50 w-64 rounded-box border border-base-300 bg-base-100 p-1.5 text-sm shadow-[0_8px_28px_rgb(15_20_30/0.22)]"
-    style="left:{Math.min(menu.x, window.innerWidth - 270)}px;top:{Math.min(menu.y, window.innerHeight - 330)}px"
+    class="fixed z-50 max-h-[calc(100vh-16px)] w-64 overflow-y-auto rounded-box border border-base-300 bg-base-100 p-1.5 text-sm shadow-[0_8px_28px_rgb(15_20_30/0.22)]"
+    style="left:{Math.min(menu.x, window.innerWidth - 270)}px;top:{menuTop}px"
     role="menu"
     aria-label="{menuFor.name} options"
     tabindex="-1"

@@ -74,6 +74,7 @@ const games: Game[] = Array.from({ length: COUNT }, (_, i) => {
     hunters: total ? { median_minutes: median, fastest_minutes: Math.floor(median / (3 + rnd() * 5)), perfected: Math.floor(rnd() * 20000), players: 20000 + Math.floor(rnd() * 80000), achievements: total } : null,
     extras: { deck: Math.floor(rnd() * 4), controller: Math.floor(rnd() * 3), platforms: 1 | (rnd() < 0.3 ? 4 : 0) | (rnd() < 0.2 ? 2 : 0), vr: rnd() < 0.05, early_access: rnd() < 0.08 },
     installed_bytes: rnd() < 0.15 ? Math.floor(rnd() * 60e9) : 0,
+    download_bytes: Math.floor(rnd() * 80e9),
     family: i % 41 === 9,
     screenshots: i % 5 === 0,
     store: demoStore(i),
@@ -392,7 +393,8 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
           emit({ task: '', done: 0, total: 0, finished: true, errors: [] });
         } else emit({ task: 'achievement progress', done, total: 60, finished: false, errors: [] });
       }, 500);
-      return r(true);
+      // "Fetch everything now" pretends to be a big library's first fetch, to show the notice.
+      return r(args.force ? { requests: 6400, seconds: 2400, games: 5120 } : { requests: 12, seconds: 20, games: 40 });
     }
     case 'stop_online':
       stopRequested = true;
