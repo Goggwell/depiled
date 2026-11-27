@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte';
+  import { countTests } from './criteria';
   import { describeCond } from './describe';
   import { app, saveLayout } from './store.svelte';
   import type { SortKey } from './columns';
@@ -7,12 +8,15 @@
   import Icon from './Icon.svelte';
 
   let open = $state(false);
+  // Built the first time it opens, then only hidden, so reopening doesn't rebuild every tag.
+  let built = $state(false);
   let trigger: HTMLButtonElement;
   let filterDialog = $state<HTMLDivElement>();
-  let advancedFirst = $state(false);
+  let advancedPane = $state(false);
 
   async function openFilters(advanced = false) {
-    advancedFirst = advanced;
+    advancedPane = advanced || countTests(app.advanced) > 0;
+    built = true;
     open = true;
     await tick();
     filterDialog?.focus();
@@ -23,6 +27,21 @@
   }
 
   const describe = describeCond;
+
+  // What's in the search box. On a big library the grid follows after a short pause in typing,
+  // so each keystroke doesn't filter and redraw thousands of games; small ones follow at once.
+  let typed = $state(app.search);
+  let typing: ReturnType<typeof setTimeout> | undefined;
+  $effect(() => {
+    typed = app.search; // cleared or set elsewhere
+  });
+  function type(value: string) {
+    typed = value;
+    clearTimeout(typing);
+    const big = (app.library?.games.length ?? 0) > 3000;
+    if (!big || !value) app.search = value;
+    else typing = setTimeout(() => (app.search = value), 150);
+  }
 
   const sorts: [SortKey, string][] = [
     ['name', 'Name'],
@@ -108,7 +127,7 @@
   <div class="flex flex-wrap items-center gap-2">
     <label class="input input-sm h-8 min-w-36 flex-1 max-w-sm items-center gap-2 bg-base-100">
       <Icon name="search" size={15} />
-      <input type="search" aria-label="Search library" class="min-w-0 grow" placeholder="Search names, tags or studios" bind:value={app.search} />
+      <input type="search" aria-label="Search library" class="min-w-0 grow" placeholder="Search names, tags or studios" value={typed} oninput={(e) => type(e.currentTarget.value)} />
     </label>
 
     <div class="relative">
@@ -125,9 +144,9 @@
         {#if app.activeFilterCount}<span class="rounded bg-primary px-1.5 text-xs leading-5 text-primary-content tabular-nums">{app.activeFilterCount}</span>{/if}
       </button>
 
-      {#if open}
+      {#if built}
         <div
-          class="absolute left-1/2 top-10 z-30 flex max-h-[calc(100vh-180px)] w-[460px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-[0_12px_36px_rgb(15_20_30/0.22)]"
+          class="absolute left-1/2 top-10 z-30 flex max-h-[calc(100vh-180px)] {open ? '' : 'hidden'} w-[460px] max-w-[calc(100vw-2rem)] -translate-x-1/2 flex-col overflow-hidden rounded-box border border-base-300 bg-base-100 shadow-[0_12px_36px_rgb(15_20_30/0.22)]"
           bind:this={filterDialog}
           role="dialog"
           aria-label="Filters"
@@ -135,7 +154,7 @@
           onclick={(e) => e.stopPropagation()}
           onkeydown={() => {}}
         >
-          <div class="overflow-y-auto p-4"><FilterPanel {advancedFirst} /></div>
+          <div class="overflow-y-auto p-4"><FilterPanel bind:advanced={advancedPane} /></div>
           <footer class="flex items-center gap-2 border-t border-base-300 p-3">
             <button class="btn btn-ghost btn-sm" onclick={() => app.clearFilters()} disabled={!app.activeFilterCount}>Clear</button>
             <span class="flex-1"></span>

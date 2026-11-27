@@ -125,7 +125,7 @@
       <section class="border-t border-base-300 px-5 py-4">
         <h3 class="mb-2 text-[13px] font-semibold">Tags</h3>
         <div class="flex flex-wrap gap-1.5">
-          {#each topTags as t}
+          {#each topTags as t (t)}
             <button class="h-6 rounded-field border px-2 text-xs {app.tagFilter.includes(t) ? 'border-primary bg-primary text-primary-content' : 'border-base-300 hover:border-base-content/30'}" onclick={() => app.toggleTag(t)} title="Show only games with this tag">{app.tagNames[t] ?? t}</button>
           {/each}
         </div>

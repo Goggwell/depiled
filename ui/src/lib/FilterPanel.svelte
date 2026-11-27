@@ -6,9 +6,9 @@
   import Icon from './Icon.svelte';
   import type { AchFilter, Choice, PlayedFilter } from './store.svelte';
 
-  let { advancedFirst = false }: { advancedFirst?: boolean } = $props();
-  // Pick the initial pane once per opening. Editing a condition must keep the pane open.
-  let advanced = $state(untrack(() => advancedFirst || countTests(app.advanced) > 0));
+  // Which pane shows. The toolbar's popover stays mounted between openings and picks the pane
+  // each time it opens; elsewhere it's picked once. Editing a condition keeps the pane open.
+  let { advanced = $bindable(untrack(() => countTests(app.advanced) > 0)) }: { advanced?: boolean } = $props();
 
   let tagQuery = $state('');
 

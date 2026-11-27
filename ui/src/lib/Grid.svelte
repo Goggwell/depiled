@@ -175,7 +175,7 @@
 {#snippet art(g: Game)}
   {@const src = coverUrl(g.cover)}
   {#if src && !broken[g.appid]}
-    <img {src} alt="" loading="lazy" draggable="false" class="size-full object-cover" onerror={() => (broken[g.appid] = true)} />
+    <img {src} alt="" loading="lazy" decoding="async" draggable="false" class="size-full object-cover" onerror={() => (broken[g.appid] = true)} />
   {:else}
     <div class="flex size-full flex-col justify-end bg-base-300 p-2.5">
       <span class="font-display text-2xl font-bold leading-none text-base-content/40">{initials(g.name)}</span>
@@ -187,7 +187,7 @@
   bind:this={scroller}
   bind:clientWidth
   bind:clientHeight
-  class="min-h-0 flex-1 overflow-y-auto px-6 pb-6"
+  class="min-h-0 flex-1 overflow-y-auto px-6 pb-6 [contain:strict]"
   role="presentation"
   onscroll={() => (scrollTop = scroller?.scrollTop ?? 0)}
   onclick={(e) => e.target === e.currentTarget && app.clearSelection()}
@@ -211,7 +211,7 @@
         <div class="grid" style="grid-template-columns:repeat({columns},minmax(0,1fr));column-gap:{size.gapX}px;row-gap:{size.gapY}px">
           {#each shown as g (g.appid)}
             {@const on = app.selectedSet.has(g.appid)}
-            <button class="group flex flex-col text-left focus-visible:outline-none" style="gap:{size.metaGap}px" data-appid={g.appid} draggable="true" ondragstart={(e) => dragStart(e, g)} onclick={(e) => app.select(g, e)} title={g.name} aria-pressed={on}>
+            <button class="group flex flex-col text-left [contain:layout_style] focus-visible:outline-none" style="gap:{size.metaGap}px" data-appid={g.appid} draggable="true" ondragstart={(e) => dragStart(e, g)} onclick={(e) => app.select(g, e)} title={g.name} aria-pressed={on}>
               <div class="relative aspect-[2/3] w-full overflow-hidden rounded-[5px] bg-base-300 shadow-[0_1px_2px_rgb(15_20_30/0.18)] ring-offset-2 ring-offset-base-200 transition-shadow group-hover:shadow-[0_4px_12px_rgb(15_20_30/0.22)] group-focus-visible:outline group-focus-visible:outline-2 group-focus-visible:outline-offset-[5px] group-focus-visible:outline-base-content {on ? 'ring-[3px] ring-base-content' : ''}">
                 {@render art(g)}
                 {#if marks(g).length}
@@ -271,7 +271,7 @@
           {#each shown as g (g.appid)}
             {@const on = app.selectedSet.has(g.appid)}
             <button
-              class="flex items-center gap-4 border-b border-base-300/60 pl-1.5 pr-9 text-left text-[13px] focus-visible:-outline-offset-2 {on ? 'bg-base-100 font-medium outline outline-1 -outline-offset-1 outline-base-content/50' : 'hover:bg-base-100/60'}"
+              class="flex items-center gap-4 border-b border-base-300/60 pl-1.5 pr-9 text-left text-[13px] [contain:strict] focus-visible:-outline-offset-2 {on ? 'bg-base-100 font-medium outline outline-1 -outline-offset-1 outline-base-content/50' : 'hover:bg-base-100/60'}"
               style="height:{LIST_ROW}px"
               data-appid={g.appid}
               draggable="true"
