@@ -365,7 +365,7 @@ mod tests {
         miss.categories = vec![2];
         miss.review_percent = 95;
         let current = vec![col("5", "Solo gems", &[2])];
-        let ops = plan(&[rule.clone()], &[hit.clone(), miss.clone()], &current, NOW);
+        let ops = plan(std::slice::from_ref(&rule), &[hit.clone(), miss.clone()], &current, NOW);
         assert_eq!(ops, vec![Op::Add { id: "uc-5".into(), name: "Solo gems".into(), apps: vec![1] }]);
 
         let synced = Rule { sync: true, ..rule };

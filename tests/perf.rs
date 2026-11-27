@@ -26,7 +26,7 @@ fn library(n: u32) -> (Vec<Game>, Vec<Collection>) {
         .map(|c| Collection {
             id: format!("uc-{c}"),
             name: format!("Collection {c}"),
-            apps: games.iter().filter(|g| (g.appid as usize + c) % (3 + c % 5) == 0).map(|g| g.appid).collect(),
+            apps: games.iter().filter(|g| (g.appid as usize + c).is_multiple_of(3 + c % 5)).map(|g| g.appid).collect(),
             dynamic: false,
         })
         .collect();

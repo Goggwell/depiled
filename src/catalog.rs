@@ -205,7 +205,7 @@ pub fn new_id() -> String {
     let mut id = String::from("uc-");
     for _ in 0..12 {
         id.push(ALPHABET[(x % ALPHABET.len() as u64) as usize] as char);
-        x = x / ALPHABET.len() as u64 ^ x.rotate_left(17);
+        x = (x / ALPHABET.len() as u64) ^ x.rotate_left(17);
     }
     id
 }
@@ -279,7 +279,7 @@ pub mod mirror {
     pub fn decode(raw: &[u8]) -> Result<(bool, String)> {
         match raw.split_first() {
             Some((0, rest)) if rest.len() % 2 == 0 => {
-                let units: Vec<u16> = rest.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+                let units: Vec<u16> = rest.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
                 Ok((true, String::from_utf16(&units)?))
             }
             Some((1, rest)) => Ok((false, rest.iter().map(|&b| b as char).collect())),
