@@ -1,5 +1,4 @@
 import { invoke, convertFileSrc } from '@tauri-apps/api/core';
-import * as mock from './mock';
 import type { Cond } from './criteria';
 
 export interface Achievements {
@@ -177,6 +176,22 @@ export interface Settings {
   online_protondb: boolean;
   online_hunters: boolean;
   reopen_steam: boolean;
+  /** Look for a new version when the app starts. */
+  check_updates: boolean;
+  /** Numbered releases, or the newest build of the main branch. */
+  update_channel: 'stable' | 'nightly';
+}
+
+/** A newer version, found by `checkUpdate`. */
+export interface UpdateInfo {
+  version: string;
+  current: string;
+  notes: string | null;
+}
+
+export interface UpdateProgress {
+  downloaded: number;
+  total: number | null;
 }
 
 /** Sent by the background watcher. */
@@ -213,10 +228,13 @@ export const isDesktop = typeof window !== 'undefined' && '__TAURI_INTERNALS__' 
 
 export const coverUrl = (path: string | null): string | null => (path ? (isDesktop && !path.startsWith('http') ? convertFileSrc(path) : path) : null);
 
-const call = <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => (isDesktop ? invoke<T>(cmd, args) : mock.call<T>(cmd, args));
+// The demo's invented library is only loaded in a plain browser, so the app doesn't carry it.
+const mock = () => import('./mock');
+
+const call = <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => (isDesktop ? invoke<T>(cmd, args) : mock().then((m) => m.call<T>(cmd, args)));
 
 async function listen<T>(event: string, handler: (payload: T) => void): Promise<() => void> {
-  if (!isDesktop) return mock.listen(event, handler);
+  if (!isDesktop) return (await mock()).listen(event, handler);
   const { listen } = await import('@tauri-apps/api/event');
   return listen<T>(event, (e) => handler(e.payload));
 }
@@ -224,6 +242,8 @@ async function listen<T>(event: string, handler: (payload: T) => void): Promise<
 /** The background watcher. Returns a function that stops listening. */
 export const onOrganizer = (handler: (e: OrganizerEvent) => void) => listen('organizer', handler);
 export const onOnline = (handler: (e: OnlineProgress) => void) => listen('online', handler);
+/** A source finished and saved what it fetched, while others may still be running. */
+export const onOnlineSaved = (handler: () => void) => listen('online-saved', handler);
 
 export const status = () => call<Status>('status');
 export const disableDebugPort = () => call<void>('disable_debug_port');
@@ -260,3 +280,10 @@ export const applyRules = () => call<Patch>('apply_rules');
 export const refreshOnline = (country: string, force = false) => call<boolean>('refresh_online', { country, force });
 /** Stops the refresh after the request in flight; what was fetched is kept. */
 export const stopOnline = () => call<void>('stop_online');
+
+/** Asks GitHub for a newer build on the channel. Null when this is the newest. */
+export const checkUpdate = (nightly: boolean) => call<UpdateInfo | null>('check_update', { nightly });
+/** Downloads and installs the update `checkUpdate` found, then restarts into it. */
+export const installUpdate = () => call<void>('install_update');
+export const onUpdateProgress = (handler: (p: UpdateProgress) => void) => listen('update-progress', handler);
+export const appVersion = (): Promise<string> => (isDesktop ? import('@tauri-apps/api/app').then((m) => m.getVersion()) : Promise.resolve('0.2.0'));

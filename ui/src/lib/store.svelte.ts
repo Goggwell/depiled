@@ -84,6 +84,22 @@ interface Toast {
 
 const emptyDraft = (): DraftState => ({ pending: 0, changed: [], undo: null, redo: null, steam_running: false, rebased: false });
 
+
+/** Text as search compares it: lower case, accents dropped, so "pokemon" finds "Pokémon". */
+export const fold = (s: string) => s.normalize('NFD').replace(/\p{M}/gu, '').toLowerCase();
+
+const searchTexts = new WeakMap<Game, string>();
+/** A game's name and studios, folded. Edits replace a game's object, which drops its entry. */
+function searchText(g: Game): string {
+  let text = searchTexts.get(g);
+  if (text === undefined) {
+    // Newlines keep a search from matching across the end of one name and the start of the next.
+    text = fold([g.name, ...g.developers, ...g.publishers].join('\n'));
+    searchTexts.set(g, text);
+  }
+  return text;
+}
+
 class AppStore {
   status = $state<Status | null>(null);
   // `$state.raw` for the big data: replaced as a whole, never edited in place, and not
@@ -174,7 +190,14 @@ class AppStore {
     online_protondb: true,
     online_hunters: true,
     reopen_steam: true,
+    check_updates: true,
+    update_channel: 'stable',
   });
+  /** This build's version. */
+  version = $state('');
+  /** A newer version that was found, and how far its download is. */
+  update = $state<{ info: api.UpdateInfo; phase: 'ready' | 'downloading' | 'installing'; downloaded: number; total: number | null } | null>(null);
+  checkingUpdate = $state(false);
   /** Country for store prices: the user's choice, or this computer's region. */
   region = $derived(this.settings.region ?? this.library?.online.detected_region ?? 'US');
   settingsLoaded = $state(false);
@@ -245,16 +268,22 @@ class AppStore {
     this.advanced = rule.condition ? editableGroup(structuredClone(rule.condition)) : { all: [] };
   }
 
+  /** Each game's search text, in library order. Built on the first search and again when the
+   *  library changes, reusing the text of every game that didn't; a keystroke is then one
+   *  substring test per string, which is quicker than looking each game up. */
+  private searchIndex = $derived((this.library?.games ?? []).map(searchText));
+
   visible = $derived.by(() => {
     const lib = this.library;
     if (!lib) return [] as Game[];
-    const q = this.search.trim().toLowerCase();
+    const q = fold(this.search.trim());
     const now = Date.now() / 1000;
-    const matchingTags = q ? Object.entries(lib.tags).filter(([, n]) => n.toLowerCase() === q).map(([id]) => Number(id)) : [];
+    const matchingTags = q ? Object.entries(lib.tags).filter(([, n]) => fold(n) === q).map(([id]) => Number(id)) : [];
     const rule = this.criteria;
-    const list = lib.games.filter((g) => {
+    const index = q ? this.searchIndex : null;
+    const list = lib.games.filter((g, i) => {
       if (!this.inView(g)) return false;
-      if (q && !g.name.toLowerCase().includes(q) && !matchingTags.some((t) => g.tags.includes(t)) && !g.developers.some((d) => d.toLowerCase().includes(q)) && !g.publishers.some((p) => p.toLowerCase().includes(q))) return false;
+      if (index && !index[i].includes(q) && !matchingTags.some((t) => g.tags.includes(t))) return false;
       return matchesRule(rule, g, now);
     });
     // Unknown values sort last whatever the direction; ties fall back to the name.
@@ -331,6 +360,15 @@ class AppStore {
     this.settingsLoaded = true;
     await api.onOrganizer((e) => this.onOrganizer(e)).catch(() => {});
     await api.onOnline((e) => this.onOnline(e)).catch(() => {});
+    await api.onOnlineSaved(() => this.showSavedOnline()).catch(() => {});
+    await api.onUpdateProgress((p) => this.onUpdateProgress(p)).catch(() => {});
+    this.version = await api.appVersion().catch(() => '');
+    // Once soon after starting, out of the way of reading the library, then twice a day for
+    // people who leave the app open.
+    if (api.isDesktop) {
+      setTimeout(() => this.settings.check_updates && this.checkUpdate(), 8000);
+      setInterval(() => this.settings.check_updates && this.checkUpdate(), 12 * 3600 * 1000);
+    }
     if (this.status.steam_found) {
       await this.refresh();
       this.refreshOnline();
@@ -405,6 +443,12 @@ class AppStore {
     }
   }
 
+  /** Shows a source's data as soon as it is saved. Only the online caches are read again. */
+  private async showSavedOnline() {
+    if (this.busy || this.saving) return;
+    await api.loadLibrary(true).then((l) => this.setLibrary(l)).catch(() => {});
+  }
+
   stopOnline() {
     this.recheckOnline = false;
     api.stopOnline().catch((e) => this.fail(e));
@@ -424,6 +468,42 @@ class AppStore {
       this.fail(e);
     }
   }
+  // ---- updates -----------------------------------------------------------------------
+
+  /** Looks for a newer version. An automatic check stays quiet when offline or up to date. */
+  async checkUpdate(manual = false) {
+    if (this.checkingUpdate || (this.update && this.update.phase !== 'ready')) return;
+    this.checkingUpdate = true;
+    try {
+      const info = await api.checkUpdate(this.settings.update_channel === 'nightly');
+      this.update = info ? { info, phase: 'ready', downloaded: 0, total: null } : null;
+      if (manual && !info) this.say(`Depiled is up to date${this.version ? ` (${this.version})` : ''}.`, false);
+    } catch (e) {
+      if (manual) this.say(`Couldn’t check for updates. ${e instanceof Error ? e.message : e}`, false, true);
+    } finally {
+      this.checkingUpdate = false;
+    }
+  }
+
+  /** Downloads the update and restarts into it. Unsaved changes are kept: they're on disk. */
+  async installUpdate() {
+    const u = this.update;
+    if (!u || u.phase !== 'ready') return;
+    this.update = { ...u, phase: 'downloading' };
+    try {
+      await api.installUpdate();
+    } catch (e) {
+      this.update = { ...u, phase: 'ready' };
+      this.fail(e);
+    }
+  }
+
+  private onUpdateProgress(p: api.UpdateProgress) {
+    if (!this.update) return;
+    const done = p.total !== null && p.downloaded >= p.total;
+    this.update = { ...this.update, downloaded: p.downloaded, total: p.total, phase: done ? 'installing' : 'downloading' };
+  }
+
   // ---- settings ----------------------------------------------------------------------
 
   async updateSettings(change: Partial<Settings>) {
@@ -431,6 +511,10 @@ class AppStore {
       this.settings = { ...this.settings, ...change };
       await api.setSettings($state.snapshot(this.settings) as Settings);
       if (change.automation && change.automation !== 'notify') this.pending = null;
+      if (change.update_channel && this.update?.phase !== 'downloading') {
+        this.update = null;
+        this.checkUpdate();
+      }
       if (change.region !== undefined || Object.keys(change).some((k) => k.startsWith('online_'))) {
         if (this.online) {
           this.recheckOnline = this.settings.online_stats === true;

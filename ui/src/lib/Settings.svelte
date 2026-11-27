@@ -2,6 +2,8 @@
   import type { Automation } from './api';
   import { app } from './store.svelte';
   import type { Theme } from './store.svelte';
+  import Icon from './Icon.svelte';
+  import UpdateProgress from './UpdateProgress.svelte';
 
   const modes: { value: Automation; title: string; text: string }[] = [
     { value: 'off', title: 'Never', text: 'I’ll press Auto-organize myself.' },
@@ -21,7 +23,7 @@
     { key: 'online_achievements', title: 'Achievement progress', text: 'Read from your public Steam profile for each game you’ve played: again after you play it, when an update adds achievements, and every six to eight months.' },
     { key: 'online_prices', title: 'Prices, sales and review counts', text: 'From the Steam store for your region, checked weekly.' },
     { key: 'online_protondb', title: 'ProtonDB ratings', text: 'How well each game runs on Linux and Steam Deck. New ratings are checked about monthly. Established ratings are checked less often.' },
-    { key: 'online_hunters', title: 'Completion times', text: 'Time to unlock every achievement, from SteamHunters, checked weekly. Also how Depiled notices that an update added achievements to a game you finished.' },
+    { key: 'online_hunters', title: 'Completion times', text: 'Time to unlock every achievement, from SteamHunters. Checked when Steam reports that a game changed, and monthly otherwise. Also how Depiled notices that an update added achievements to a game you finished.' },
   ];
   const mb = (bytes: number) => bytes === 0 ? '0 KB' : (bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1e3))} KB`);
   const usage = $derived(app.library?.online.usage);
@@ -111,6 +113,36 @@
           </div>
         </section>
 
+        <section class={section}>
+          <h3 class="font-semibold">Updates</h3>
+          <p class="mt-0.5 text-muted">{app.version ? `This is Depiled ${app.version}.` : ''} Updates are downloaded from Depiled’s GitHub page and installed in place. Changes that aren’t in Steam yet are kept.</p>
+          <label class="mt-3 flex cursor-pointer items-center gap-2.5">
+            <input type="checkbox" class="checkbox checkbox-xs" checked={app.settings.check_updates} onchange={(e) => app.updateSettings({ check_updates: e.currentTarget.checked })} />
+            Check for a new version when Depiled starts
+          </label>
+          <div class="mt-3 flex items-start gap-3">
+            <span class="flex-1">Get<span class="block text-muted">{app.settings.update_channel === 'nightly' ? 'The newest build, made after every change. Gets fixes first, and is tested less.' : 'Numbered releases only.'}</span></span>
+            <div class="seg" role="group" aria-label="Which versions to get">
+              <button aria-pressed={app.settings.update_channel === 'stable'} onclick={() => app.updateSettings({ update_channel: 'stable' })}>Releases</button>
+              <button aria-pressed={app.settings.update_channel === 'nightly'} onclick={() => app.updateSettings({ update_channel: 'nightly' })}>Nightly builds</button>
+            </div>
+          </div>
+          <div class="mt-3 flex min-h-8 items-center gap-3">
+            {#if app.update?.phase === 'ready'}
+              <span class="flex-1"><strong class="font-semibold">Depiled {app.update.info.version}</strong> is available.</span>
+              <button class="btn btn-primary btn-sm" disabled={app.saving} onclick={() => app.installUpdate()}><Icon name="download" size={15} /> Update and restart</button>
+            {:else if app.update}
+              <span class="flex-1"><UpdateProgress wide /></span>
+            {:else}
+              <span class="flex-1 text-muted">{app.checkingUpdate ? 'Checking…' : ''}</span>
+              <button class="btn btn-sm" disabled={app.checkingUpdate} onclick={() => app.checkUpdate(true)}>Check now</button>
+            {/if}
+          </div>
+          {#if app.update?.info.notes}
+            <p class="mt-2 max-h-32 overflow-y-auto whitespace-pre-line rounded-field bg-base-200 p-2.5 text-muted">{app.update.info.notes}</p>
+          {/if}
+        </section>
+
         {#if app.status?.legacy_debug_port}
           <section class={section}>
             <h3 class="font-semibold">Steam’s debug port is still on</h3>
@@ -120,7 +152,7 @@
         {/if}
 
         <section class="{section} text-muted">
-          Your library is read from Steam’s files on this computer. With details from the internet on, Depiled asks Steam, SteamHunters and ProtonDB about your games and reads your public profile. Nothing else leaves this computer.
+          Your library is read from Steam’s files on this computer. With details from the internet on, Depiled asks Steam, SteamHunters and ProtonDB about your games and reads your public profile. Checking for updates asks GitHub for the newest version number. Nothing else leaves this computer.
         </section>
       </div>
 

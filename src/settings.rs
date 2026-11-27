@@ -1,4 +1,5 @@
-//! App preferences that aren't rules: currently just how automatic organizing should be.
+//! App preferences that aren't rules: how automatic organizing should be, which online extras
+//! to fetch, and where updates come from.
 
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,17 @@ pub enum Automation {
     Notify,
     /// Apply the rules without asking. Every change is still snapshotted, so it can be undone.
     Auto,
+}
+
+/// Which builds the app offers to update to.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Channel {
+    /// Numbered releases.
+    #[default]
+    Stable,
+    /// The newest build of the main branch, replaced on every change.
+    Nightly,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -41,6 +53,11 @@ pub struct Settings {
     /// Start Steam again after closing it to save.
     #[serde(default = "yes")]
     pub reopen_steam: bool,
+    /// Look for a new version when the app starts.
+    #[serde(default = "yes")]
+    pub check_updates: bool,
+    #[serde(default)]
+    pub update_channel: Channel,
 }
 
 fn yes() -> bool {
@@ -58,6 +75,8 @@ impl Default for Settings {
             online_protondb: true,
             online_hunters: true,
             reopen_steam: true,
+            check_updates: true,
+            update_channel: Channel::Stable,
         }
     }
 }

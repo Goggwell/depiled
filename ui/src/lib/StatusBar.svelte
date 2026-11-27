@@ -2,6 +2,7 @@
   import { app } from './store.svelte';
   import Icon from './Icon.svelte';
   import OnlineStatus from './OnlineStatus.svelte';
+  import UpdateProgress from './UpdateProgress.svelte';
 
   const n = $derived(app.draft.pending);
   const savedAt = $derived(app.lastSaved ? new Date(app.lastSaved.at).toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' }) : '');
@@ -32,6 +33,14 @@
   {/if}
 
   <span class="flex-1"></span>
+
+  {#if app.update?.phase === 'ready'}
+    <button class="btn btn-ghost btn-sm gap-1.5 font-normal" disabled={app.saving} onclick={() => app.installUpdate()} title="Downloads it and restarts Depiled. Changes that aren’t in Steam yet are kept.">
+      <Icon name="download" size={15} /> Update to {app.update.info.version}
+    </button>
+  {:else if app.update}
+    <UpdateProgress />
+  {/if}
 
   <OnlineStatus />
 

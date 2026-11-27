@@ -14,6 +14,7 @@ use depiled::steam::SteamInstall;
 use depiled::watcher;
 use serde::Serialize;
 use tauri::{Emitter, Manager, State};
+use tauri_plugin_updater::{Update, UpdaterExt};
 
 static STOP_WATCHER: AtomicBool = AtomicBool::new(false);
 /// An online refresh is running, so a second one isn't started on top.
@@ -284,6 +285,9 @@ async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country
             };
             let (done, total) = lanes.values().fold((0, 0), |(d, t), (dd, tt)| (d + dd, t + tt));
             let _ = app.emit("online", OnlineProgress { task, active, done, total, finished: false, errors: Vec::new(), changed: true });
+        }, &|| {
+            // A source finished and saved: the window shows its data now, not after the rest.
+            let _ = app.emit("online-saved", ());
         });
         ONLINE.store(false, Ordering::SeqCst);
         let changed = changed.load(Ordering::Relaxed) || !errors.is_empty();
@@ -291,6 +295,81 @@ async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country
     });
     Ok(true)
 }
+// ---- updates ------------------------------------------------------------------------------
+
+/// The update found by the last check, kept until it's installed.
+#[derive(Default)]
+struct Found(Mutex<Option<Update>>);
+
+/// Nightly builds replace one pre-release, so its manifest is always at the same address.
+const NIGHTLY: &str = "https://github.com/Goggwell/depiled/releases/download/nightly/latest.json";
+
+#[derive(Serialize)]
+struct UpdateInfo {
+    version: String,
+    current: String,
+    notes: Option<String>,
+}
+
+#[derive(Clone, Serialize)]
+struct UpdateProgress {
+    downloaded: u64,
+    total: Option<u64>,
+}
+
+/// Asks GitHub whether a newer build is out on the chosen channel. Every build is signed, and
+/// one that isn't signed by Depiled's key is refused before it's installed.
+#[tauri::command]
+async fn check_update(app: tauri::AppHandle, found: State<'_, Found>, nightly: bool) -> Res<Option<UpdateInfo>> {
+    let mut builder = app.updater_builder().timeout(Duration::from_secs(30));
+    if nightly {
+        // Each nightly build is newer than the one before, and a nightly user should also be
+        // offered the next numbered release, so anything that isn't this exact build counts.
+        let url = tauri::Url::parse(NIGHTLY).map_err(|e| e.to_string())?;
+        builder = builder.endpoints(vec![url]).map_err(|e| e.to_string())?.version_comparator(|current, remote| remote.version != current);
+    }
+    let update = builder.build().map_err(|e| e.to_string())?.check().await.map_err(|e| e.to_string())?;
+    let info = update.as_ref().map(|u| UpdateInfo { version: u.version.clone(), current: u.current_version.clone(), notes: u.body.clone().filter(|b| !b.trim().is_empty()) });
+    *found.0.lock().map_err(|e| e.to_string())? = update;
+    Ok(info)
+}
+
+/// Downloads the update found by `check_update`, reporting progress as "update-progress"
+/// events, then installs it and starts the new version. Unsaved changes are already on disk,
+/// so they're still there afterwards. Waits for a save to Steam in progress to finish first.
+#[tauri::command]
+async fn install_update(app: tauri::AppHandle, found: State<'_, Found>, state: State<'_, Shared>) -> Res<()> {
+    let update = found.0.lock().map_err(|e| e.to_string())?.take().ok_or("Check for updates first.")?;
+    let mut downloaded = 0u64;
+    let mut shown = 0u64;
+    let bytes = update
+        .download(
+            |chunk, total| {
+                downloaded += chunk as u64;
+                // About a hundred events for the whole download, not one per network read.
+                let step = total.map_or(256 * 1024, |t| (t / 100).max(1));
+                if downloaded - shown >= step || total == Some(downloaded) {
+                    shown = downloaded;
+                    let _ = app.emit("update-progress", UpdateProgress { downloaded, total });
+                }
+            },
+            || {},
+        )
+        .await
+        .map_err(|e| format!("The download didn't finish: {e}"))?;
+    let shared = state.inner().clone();
+    blocking(move || {
+        // Holding the session means no edit or save is half-written when the app exits.
+        let _session = shared.lock().map_err(|_| anyhow::anyhow!("the app's state is unavailable, restart it"))?;
+        STOP_WATCHER.store(true, Ordering::Relaxed);
+        update.install(bytes).map_err(|e| anyhow::anyhow!("The update couldn't be installed: {e}"))
+    })
+    .await?;
+    // Windows exits inside install() and the installer starts the new version; elsewhere the
+    // new files are in place and the app restarts into them.
+    app.restart();
+}
+
 /// Stops the online refresh after the request in flight. What was fetched so far is kept.
 #[tauri::command]
 fn stop_online() {
@@ -301,7 +380,9 @@ pub fn run() {
     let shared: Shared = Arc::new(Mutex::new(None));
     let for_watcher = shared.clone();
     tauri::Builder::default()
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(shared)
+        .manage(Found::default())
         .setup(move |app| {
             // Let the page show Steam's cached cover art, and nothing else on disk.
             if let Ok(install) = SteamInstall::detect() {
@@ -348,6 +429,8 @@ pub fn run() {
             apply_rules,
             refresh_online,
             stop_online,
+            check_update,
+            install_update,
         ])
         .run(tauri::generate_context!())
         .expect("error while running the app");

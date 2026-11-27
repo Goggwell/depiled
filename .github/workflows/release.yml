@@ -21,10 +21,10 @@ jobs:
             bundles: nsis
           - os: macos-latest
             target: aarch64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
           - os: macos-latest
             target: x86_64-apple-darwin
-            bundles: dmg
+            bundles: app,dmg
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v5
@@ -44,9 +44,14 @@ jobs:
       - uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Signs the update files, so the app only installs updates built here.
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           projectPath: ui
           tagName: ${{ github.ref_name }}
           releaseName: Depiled ${{ github.ref_name }}
           releaseDraft: true
-          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }}
+          # The update files are only made here, where the signing key is. A build without the
+          # key (anyone building from source) makes the installers alone.
+          args: --target ${{ matrix.target }} --bundles ${{ matrix.bundles }} --config src-tauri/tauri.updates.conf.json

@@ -121,6 +121,8 @@ let settings = {
   online_protondb: true,
   online_hunters: true,
   reopen_steam: true,
+  check_updates: true,
+  update_channel: 'stable',
 };
 let steamRunning = true;
 let stopRequested = false;
@@ -383,6 +385,17 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
     case 'stop_online':
       stopRequested = true;
       return r(undefined);
+    case 'check_update':
+      return r({ version: '0.3.0', current: '0.2.0', notes: null });
+    case 'install_update': {
+      // Pretend to download, so the progress can be seen in the demo. Nothing restarts.
+      const total = 6_400_000;
+      for (let downloaded = 0; downloaded <= total; downloaded += 320_000) {
+        listeners.get('update-progress')?.forEach((l) => l({ downloaded, total }));
+        await sleep(120);
+      }
+      throw new Error('The demo can’t install updates.');
+    }
   }
   throw new Error(`unknown command ${cmd}`);
 }
