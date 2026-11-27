@@ -403,7 +403,7 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
       mockAccount = args.account ?? 1;
       return r(undefined);
     case 'check_update':
-      return r({ version: '0.3.0', current: '0.2.1', notes: null });
+      return r({ version: '0.3.0', current: '0.2.2', notes: null });
     case 'install_update': {
       // Pretend to download, so the progress can be seen in the demo. Nothing restarts.
       const total = 6_400_000;
