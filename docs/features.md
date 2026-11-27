@@ -5,7 +5,8 @@ its Library view. It reads your library from Steam's files on your computer, let
 games by hand or by rules, shows you exactly what will change, and saves it back to Steam.
 Every change can be undone.
 
-It runs on Windows 10 and 11 (64-bit and 32-bit) and on macOS (Apple silicon and Intel).
+It runs on Windows 10 and 11 (64-bit and 32-bit). The code supports macOS too, but there are
+no Mac builds until it has been tested on a real Mac.
 
 ## Contents
 
@@ -34,15 +35,11 @@ It runs on Windows 10 and 11 (64-bit and 32-bit) and on macOS (Apple silicon and
    | --- | --- |
    | Windows 10 or 11, 64-bit (almost every PC) | `Depiled_<version>_x64-setup.exe` |
    | Windows 10 or 11, 32-bit | `Depiled_<version>_x86-setup.exe` |
-   | Mac with Apple silicon (M1 and later) | `Depiled_<version>_aarch64.dmg` |
-   | Mac with an Intel processor | `Depiled_<version>_x64.dmg` |
 
 3. Install it.
    - **Windows:** run the installer. It doesn't need admin rights. Windows SmartScreen may
      say it "protected your PC" because the app isn't code-signed yet; choose **More info**,
      then **Run anyway**.
-   - **macOS:** open the `.dmg` and drag Depiled to Applications. The first time, right-click
-     the app and choose **Open**, because Gatekeeper blocks unsigned apps on a double-click.
 4. Make sure Steam has been signed in on this computer at least once. Depiled finds Steam
    and your account on its own; there's nothing to configure.
 
@@ -61,8 +58,8 @@ startup, and choose what to get:
   Switching back to Releases offers the next numbered version once it's out.
 
 Every update is signed when it's built, and Depiled won't install one whose signature
-doesn't match. (That's separate from Windows and macOS code signing, which the installers
-don't have yet.) Versions before 0.2.1 can't update themselves, so install 0.2.1 by hand
+doesn't match. (That's separate from Windows code signing, which the installers don't have
+yet.) Versions before 0.2.1 can't update themselves, so install 0.2.1 by hand
 once.
 
 Nightly installers are also on the
@@ -70,9 +67,9 @@ Nightly installers are also on the
 build stays downloadable for 30 days from the
 [Actions tab](https://github.com/Goggwell/depiled/actions/workflows/nightly.yml).
 
-**Uninstalling.** Use Windows' **Installed apps** (or delete the app on macOS). Your
+**Uninstalling.** Use Windows' **Installed apps**. Your
 collections stay in Steam. Depiled's own settings and saved copies are in
-`%APPDATA%\depiled` on Windows and `~/Library/Application Support/depiled` on macOS; delete
+`%APPDATA%\depiled`; delete
 that folder to remove them too.
 
 ## First start
@@ -323,4 +320,4 @@ work on; `--use auto` follows Steam again.
 - Achievement progress from the internet needs a public profile. Without one, only progress
   Steam has saved on this computer is known.
 - The installers aren't code-signed yet, hence the first-launch warnings.
-- The macOS build has had less testing than the Windows one.
+- Windows only for now. Mac builds come back once they've been tested on a Mac.

@@ -457,8 +457,10 @@ GitHub Actions:
 - **Every push:** tests and type checks on Windows and macOS.
 - **Every push to main:** a nightly pre-release is rebuilt, and its installers stay
   downloadable for 30 days.
-- **A version tag:** builds the four installers (Windows 64- and 32-bit, macOS Apple silicon
-  and Intel) and attaches them to a release.
+- **A version tag:** builds the Windows installers (64- and 32-bit) and attaches them to a
+  release. The macOS builds are paused until they can be tested on a Mac; the code and the
+  macOS CI run stay, so turning them back on is a matter of uncommenting them in the
+  workflows.
 
 **How does the app update itself?**
 
@@ -468,8 +470,8 @@ so building from source needs no key), and attach a `latest.json` that lists eac
 signature. The app has the matching public key built in. It fetches `latest.json` from the
 newest release (or from the nightly pre-release, if you chose nightly builds), and if
 there's something newer, downloads it while reporting progress, checks the signature and
-installs it. On Windows that runs the installer in its quiet mode, which restarts the app;
-on macOS the app bundle is swapped and the app restarts.
+installs it. On Windows that runs the installer in its quiet mode, which restarts the app.
+(On macOS it would swap the app bundle and restart.)
 
 Nightly builds are numbered after the next release (`0.2.1-nightly.57` after 0.2.0), so
 each one is distinct. On the nightly channel, any build that isn't the one running counts
@@ -484,11 +486,10 @@ save to Steam; and unsaved changes are already on disk, so they survive the rest
 
 - **Saving needs Steam closed.** That's the price of not using the debug port. Depiled
   makes it a single click, but it does close any game that's running.
-- **Code signing.** The installers aren't signed yet, so Windows and macOS warn on first
-  launch.
+- **Code signing.** The installers aren't signed yet, so Windows warns on first launch.
 - **Private profiles** only get the achievement progress Steam leaves on disk. That's the
   honest limit of not using an API key.
 - **The duplicated matcher.** It is a maintenance cost; the shared test cases keep it in
   check. If it grew much more, I'd consider compiling the Rust matcher to WebAssembly for
   the window.
-- **macOS** has had less real-world testing than Windows.
+- **macOS** builds are paused until they've been tested on a real Mac.

@@ -38,11 +38,12 @@ Get the installer for your computer from the
 | --- | --- |
 | Windows 10 or 11, 64-bit | `Depiled_<version>_x64-setup.exe` |
 | Windows 10 or 11, 32-bit | `Depiled_<version>_x86-setup.exe` |
-| Mac, Apple silicon | `Depiled_<version>_aarch64.dmg` |
-| Mac, Intel | `Depiled_<version>_x64.dmg` |
 
 The installers aren't code-signed yet. On Windows, choose **More info**, then **Run anyway**
-if SmartScreen stops it. On a Mac, right-click the app and choose **Open** the first time.
+if SmartScreen stops it.
+
+Depiled is Windows-only for now. The code supports macOS, but Mac builds are paused until
+they've been tested on a real Mac.
 
 Steam needs to have been signed in on the computer at least once; Depiled finds it on its
 own.
@@ -98,9 +99,8 @@ The core is also a command-line tool: `depiled --help` lists `list`, `plan`, `ap
 
 ## Your data
 
-Settings, rules (`config.toml`) and saved copies live in `%APPDATA%\depiled` on Windows and
-`~/Library/Application Support/depiled` on macOS. Your collections themselves stay in
-Steam.
+Settings, rules (`config.toml`) and saved copies live in `%APPDATA%\depiled`. Your
+collections themselves stay in Steam.
 
 ## License
 
