@@ -395,4 +395,4 @@ export const checkUpdate = (nightly: boolean) => call<UpdateInfo | null>('check_
 /** Downloads and installs the update `checkUpdate` found, then restarts into it. */
 export const installUpdate = () => call<void>('install_update');
 export const onUpdateProgress = (handler: (p: UpdateProgress) => void) => listen('update-progress', handler);
-export const appVersion = (): Promise<string> => (isDesktop ? import('@tauri-apps/api/app').then((m) => m.getVersion()) : Promise.resolve('0.2.5'));
+export const appVersion = (): Promise<string> => (isDesktop ? import('@tauri-apps/api/app').then((m) => m.getVersion()) : Promise.resolve('0.2.6'));
