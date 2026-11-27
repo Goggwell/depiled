@@ -437,6 +437,30 @@ Yes. In a plain browser (`npm run dev`), the app detects it's not inside Tauri a
 mock backend with invented games and covers. `?games=10000` makes a big library for
 performance work, and `?theme=dark` or `?theme=light` forces a theme for screenshots.
 
+## Feedback and crashes
+
+**How do reports reach you without your email being in the app?**
+
+The app posts a report (kind, message, optional reply address, technical details) as JSON to a
+form service that forwards it by email. The service's address is compiled in from the
+`DEPILED_FEEDBACK_URL` build variable, which the release workflows fill from a repository
+secret, so neither it nor the inbox behind it is in the public code. A build without it, like
+one made from source, offers **Copy report** instead.
+
+**What happens on a crash?**
+
+The release build uses `panic = "abort"`, so any panic ends the program. A panic hook in
+`src/report.rs` runs first: it writes a crash log (the message, where it happened, the
+thread, Windows and Depiled versions, the time and a backtrace) to `crashes/` in Depiled's
+folder, then starts the app again with `--crash-report <file>`. That second copy shows only a
+small "Depiled closed unexpectedly" window. If it can't start, the main window finds the log
+on its next start and asks there. Sent or dismissed logs move to `crashes/handled`, and only
+the last 20 are kept. Unsaved changes are on disk already, so a crash doesn't lose them.
+
+Every report and log goes through `scrub`, which blanks the home folder (and so the Windows
+user name) and Steam ids before anything is shown or sent. Setting `DEPILED_CRASH_TEST=1`
+makes the app crash four seconds after starting, to try the reporter.
+
 ## Testing and shipping
 
 **How is it tested?**

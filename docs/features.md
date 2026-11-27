@@ -20,6 +20,7 @@ no Mac builds until it has been tested on a real Mac.
 - [Saving to Steam](#saving-to-steam)
 - [Undo and history](#undo-and-history)
 - [Details from the internet](#details-from-the-internet)
+- [Feedback and crash reports](#feedback-and-crash-reports)
 - [Keyboard](#keyboard)
 - [Privacy and safety](#privacy-and-safety)
 - [Command line](#command-line)
@@ -277,6 +278,25 @@ computer, so the app works the same with no connection.
   Depiled says so if it isn't. It also reads progress Steam leaves on your computer after a
   play session, which needs no internet at all.
 
+## Feedback and crash reports
+
+- **Send feedback.** The speech-bubble button in the toolbar opens a short form: say whether
+  something's wrong, you have an idea, or something else, write it, and optionally leave an
+  email address for a reply. It goes straight to the developer.
+- **Report an error.** Error messages have a **Report** button that opens the same form with
+  the error already filled in.
+- **When Depiled crashes,** a small window opens straight away, like a game's crash reporter:
+  it says what happened, lets you add what you were doing, and sends the crash log if you
+  press **Send report**. If that window can't open, Depiled asks the next time it starts.
+  Changes you hadn't saved to Steam are kept either way.
+- **What's in a report** is shown before you send it: what you wrote and, if you leave it
+  ticked, Depiled's and Windows' versions, how many games and collections you have, a few
+  settings and recent error messages. Never your Steam account, names or library, and your
+  user folder and Steam ids are blanked out of every message. Nothing is sent unless you
+  press Send.
+- **Can't send?** **Copy report** puts the whole report on the clipboard, to paste into an
+  issue on GitHub or anywhere else.
+
 ## Keyboard
 
 | Keys | Does |
@@ -301,7 +321,8 @@ The keyboard button in the toolbar lists these too.
 - With details from the internet off, nothing about your library leaves your computer. With
   them on, Depiled contacts the Steam store, your public Steam profile page, SteamHunters and
   ProtonDB, and nothing else. The update check asks GitHub for the newest version and sends
-  nothing about you; it can be turned off in Settings.
+  nothing about you; it can be turned off in Settings. Feedback and crash reports are only
+  sent when you press Send, and show what they contain first.
 - Before every save, a copy of Steam's own collection files is kept. You can also point
   `backup_dir` in `config.toml` at a synced folder for off-computer backups.
 
