@@ -180,6 +180,32 @@ was in before and after, and returns a small patch: the new collection list, the
 state, and the membership of only the games that moved. The window applies it to the data
 it already has.
 
+## Several accounts
+
+**How does it handle more than one Steam account?**
+
+Steam keeps each account's files under `userdata/<account id>`, and Depiled treats every
+folder with a license list as an account with a library. Names and profile pictures come from
+Steam's `config/loginusers.vdf` and `config/avatarcache`. The account to show is the one
+picked in the app if there is one; otherwise whoever is signed in right now (the registry's
+`ActiveProcess\ActiveUser` on Windows, `registry.vdf` elsewhere); otherwise whoever signed in
+last. The watcher re-checks that every few seconds, so when someone else signs in, the
+library follows.
+
+Depiled's own files for an account (the draft, snapshots, rules, auto-fill criteria,
+colours, profile achievement progress) live in `accounts/<account id>` in its folder. Settings
+and the online caches that are the same for everyone stay at the top. Achievement progress is
+addressed by the account it was fetched for, so a refresh still running when you switch can't
+write into the other account's file.
+
+**What happened to files from versions that only knew one account?**
+
+They're moved into an account folder the first time this version runs. To pick the right
+account, Depiled compares the collection ids those files mention (in the draft, colours and
+newest snapshot) with each account's collections in Steam. The ids are random, so a match is
+no accident. Only if nothing matches does it fall back to the account Steam wrote to last,
+which is how older versions chose.
+
 ## Watching Steam
 
 **How does Depiled notice you played something?**

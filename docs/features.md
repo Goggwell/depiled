@@ -12,6 +12,7 @@ It runs on Windows 10 and 11 (64-bit and 32-bit) and on macOS (Apple silicon and
 - [Installing](#installing)
 - [First start](#first-start)
 - [Your library](#your-library)
+- [Several Steam accounts](#several-steam-accounts)
 - [Collections](#collections)
 - [Filters](#filters)
 - [Auto-fill and rules](#auto-fill-and-rules)
@@ -85,7 +86,25 @@ Depiled opens straight onto your library. A card at the top asks two questions o
 
 Both can be changed later in Settings.
 
-## Your library
+## Several Steam accounts
+
+If more than one Steam account uses the computer, Depiled shows one library at a time and
+keeps the others apart.
+
+- **Whose library.** By default Depiled follows Steam: it shows whoever is signed in, and
+  switches by itself when someone else signs in. With Steam closed, it shows whoever signed in
+  last.
+- **Switching by hand.** The account at the bottom of the sidebar opens a list of every
+  account with a library on this computer, with Steam's profile picture and name. Picking one
+  sticks until you choose **Follow Steam's sign-in** again, so you can organize an account
+  that isn't signed in.
+- **Each account keeps its own** unsaved changes, history, rules, auto-fill criteria,
+  collection colours and achievement progress. Switching never loses anything: unsaved
+  changes wait for you, and the list shows how many each account has. Settings, and details
+  that are the same for everyone (prices, ratings, completion times), are shared.
+- **Saving an account that isn't signed in** works the same way. Steam picks up the changes,
+  and syncs them to its cloud, the next time that account signs in.
+
 
 - **Everything Steam knows about.** Games, demos, playtests, software, tools, soundtracks
   and videos, each in its own place in the sidebar. Games you added to Steam yourself
@@ -293,8 +312,9 @@ The keyboard button in the toolbar lists these too.
 
 The installed app is the easiest way in, but the same engine is a command-line tool for
 scripting. `depiled --help` lists the commands: `list`, `library`, `plan`, `apply`, `save`,
-`discard`, `snapshots`, `undo`, `export`, `import`, `smart`, `automation`, `watch` and
-`online`.
+`discard`, `snapshots`, `undo`, `export`, `import`, `smart`, `automation`, `watch`,
+`online` and `accounts`. `depiled accounts --use <name>` picks the account the commands
+work on; `--use auto` follows Steam again.
 
 ## Limits worth knowing
 
