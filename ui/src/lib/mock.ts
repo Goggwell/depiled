@@ -239,8 +239,8 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const sampleCrash = () => ({
   id: 'crash-1795760000.txt',
   at: Math.floor(Date.now() / 1000) - 60,
-  summary: 'Depiled 0.2.2 stopped: index out of bounds',
-  text: 'Depiled 0.2.2 stopped: index out of bounds: the len is 3 but the index is 7\nat src/service.rs:512 (thread main)\nWindows 11 Home 24H2 (build 26200), x86_64\nTime: 1795760000\n\nBacktrace:\n   0: <unknown>\n   1: <unknown>\n',
+  summary: 'Depiled 0.2.3 stopped: index out of bounds',
+  text: 'Depiled 0.2.3 stopped: index out of bounds: the len is 3 but the index is 7\nat src/service.rs:512 (thread main)\nWindows 11 Home 24H2 (build 26200), x86_64\nTime: 1795760000\n\nBacktrace:\n   0: <unknown>\n   1: <unknown>\n',
 });
 
 export async function call<T>(cmd: string, args: Record<string, any> = {}): Promise<T> {
@@ -405,7 +405,7 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
     case 'can_send_reports':
       return r(true);
     case 'report_details':
-      return r(`Depiled 0.2.2\nWindows 11 Home 24H2 (build 26200), x86_64\nLibrary: ${games.length} entries, 6 collections\nSteam accounts on this computer: 2\nOrganize as I play: notify\nDetails from the internet: on\nUpdates: stable\nSteam running: true${args.recentErrors?.length ? '\n\nRecent errors, newest last:\n' + args.recentErrors.map((e: string) => '- ' + e).join('\n') : ''}`);
+      return r(`Depiled 0.2.3\nWindows 11 Home 24H2 (build 26200), x86_64\nLibrary: ${games.length} entries, 6 collections\nSteam accounts on this computer: 2\nOrganize as I play: notify\nDetails from the internet: on\nUpdates: stable\nSteam running: true${args.recentErrors?.length ? '\n\nRecent errors, newest last:\n' + args.recentErrors.map((e: string) => '- ' + e).join('\n') : ''}`);
     case 'send_report':
       await sleep(700);
       return r(undefined);
@@ -429,7 +429,7 @@ export async function call<T>(cmd: string, args: Record<string, any> = {}): Prom
       mockAccount = args.account ?? 1;
       return r(undefined);
     case 'check_update':
-      return r({ version: '0.3.0', current: '0.2.2', notes: null });
+      return r({ version: '0.3.0', current: '0.2.3', notes: null });
     case 'install_update': {
       // Pretend to download, so the progress can be seen in the demo. Nothing restarts.
       const total = 6_400_000;
