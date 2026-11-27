@@ -69,6 +69,9 @@ pub struct Game {
     /// Lent by someone in the account's Steam Family rather than owned.
     #[serde(default)]
     pub family: bool,
+    /// Has screenshots: taken on this computer, or uploaded to the profile from anywhere.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub screenshots: bool,
     /// Steam's change number for the game's info (see `AppInfo::change`), 0 if unknown.
     #[serde(default, skip_serializing_if = "is_zero")]
     pub change: u32,
@@ -120,6 +123,7 @@ impl Default for Game {
             extras: crate::appinfo::Extras::default(),
             installed_bytes: 0,
             family: false,
+            screenshots: false,
             change: 0,
             online: Online::default(),
         }

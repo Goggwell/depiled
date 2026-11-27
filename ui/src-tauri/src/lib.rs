@@ -380,6 +380,46 @@ fn open_crash_reporter(file: &std::path::Path) {
     }
 }
 
+// ---- collection order -----------------------------------------------------------------------
+
+#[tauri::command]
+async fn set_ordering(state: State<'_, Shared>, on: bool) -> Res<Patch> {
+    with(state, move |s| edit(s, |s| s.set_ordering(on).map(|()| None))).await
+}
+
+#[tauri::command]
+async fn set_order(state: State<'_, Shared>, ids: Vec<String>) -> Res<Patch> {
+    with(state, move |s| edit(s, |s| s.set_order(&ids).map(|()| None))).await
+}
+
+// ---- presets ------------------------------------------------------------------------------
+
+#[tauri::command]
+fn presets() -> Vec<depiled::presets::Preset> {
+    depiled::presets::all()
+}
+
+#[derive(Serialize)]
+struct PresetResult {
+    patch: Patch,
+    created: Vec<String>,
+    attached: Vec<String>,
+    kept: Vec<String>,
+}
+
+#[tauri::command]
+async fn apply_preset(state: State<'_, Shared>, id: String) -> Res<PresetResult> {
+    with(state, move |s| {
+        let mut names = (Vec::new(), Vec::new(), Vec::new());
+        let patch = edit(s, |s| {
+            names = s.apply_preset(&id)?;
+            Ok(None)
+        })?;
+        Ok(PresetResult { patch, created: names.0, attached: names.1, kept: names.2 })
+    })
+    .await
+}
+
 // ---- accounts -----------------------------------------------------------------------------
 
 #[tauri::command]
@@ -568,6 +608,10 @@ pub fn run() {
             install_update,
             accounts,
             set_account,
+            presets,
+            apply_preset,
+            set_ordering,
+            set_order,
             crash_mode,
             pending_crashes,
             settle_crash,

@@ -332,6 +332,53 @@ fn achievements_path(steam64: u64) -> Result<PathBuf> {
     Ok(config::dir_for(account_id)?.join(ACHIEVEMENTS_FILE))
 }
 
+// ---- screenshots on the profile ---------------------------------------------------------------
+
+const SCREENSHOTS_FILE: &str = "profile-screenshots.json";
+
+/// Games the profile has screenshots for, from the game list on its screenshots page.
+#[derive(Debug, Default, Serialize, Deserialize)]
+pub struct ScreenshotCache {
+    #[serde(default)]
+    pub apps: std::collections::BTreeSet<u32>,
+    #[serde(default)]
+    pub fetched: u64,
+}
+
+fn screenshots_path(steam64: u64) -> Result<PathBuf> {
+    Ok(achievements_path(steam64)?.with_file_name(SCREENSHOTS_FILE))
+}
+
+pub fn load_screenshots(steam64: u64) -> ScreenshotCache {
+    screenshots_path(steam64).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+}
+
+/// Reads which games have screenshots from the filter list on the profile's screenshots page.
+/// One page covers every game, wherever the screenshots were taken.
+pub fn parse_screenshot_games(html: &str) -> std::collections::BTreeSet<u32> {
+    const MARK: &str = "SelectSharedFilesContentFilter({ 'appid': '";
+    html.match_indices(MARK)
+        .filter_map(|(i, _)| {
+            let rest = &html[i + MARK.len()..];
+            rest[..rest.find('\'')?].parse::<u32>().ok()
+        })
+        .filter(|&id| id != 0)
+        .collect()
+}
+
+/// Weekly: screenshots don't change often, and it's one page.
+pub fn screenshots_due(steam64: u64, now: u64, force: bool) -> bool {
+    force || now.saturating_sub(load_screenshots(steam64).fetched) >= WEEK
+}
+
+pub fn refresh_screenshots(steam64: u64, now: u64) -> Result<usize> {
+    let pace = Pace::new(0);
+    let html = get(&pace, &agent(), &format!("https://steamcommunity.com/profiles/{steam64}/screenshots/"))?;
+    let cache = ScreenshotCache { apps: parse_screenshot_games(&html), fetched: now };
+    save_to(&screenshots_path(steam64)?, &cache)?;
+    Ok(cache.apps.len())
+}
+
 /// The achievement progress read from one account's profile.
 pub fn load_achievements(steam64: u64) -> AchievementCache {
     achievements_path(steam64).ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
@@ -364,7 +411,13 @@ pub struct AchievementCache {
     pub private: bool,
     #[serde(default)]
     pub checked: u64,
+    /// Which reading of the page made this cache. Before 1, a game with nothing unlocked was
+    /// read as unknown, so those games are looked at once more.
+    #[serde(default)]
+    pub format: u32,
 }
+
+pub(crate) const ACHIEVEMENTS_FORMAT: u32 = 1;
 
 /// What Depiled knows about a game when deciding whether its achievement page is worth a
 /// request.
@@ -397,6 +450,7 @@ pub fn achievements_due(cache: &AchievementCache, hints: &[AchievementHint], now
             match cache.games.get(&h.appid) {
                 _ if force => true,
                 None => !local_fresh,
+                Some(p) if cache.format < ACHIEVEMENTS_FORMAT && p.total == 0 => true,
                 Some(p) => {
                     let total_changed = h.known_total > 0 && p.total > 0 && h.known_total != p.total && h.known_total != p.compared_total;
                     let complete = p.total > 0 && p.unlocked >= p.total;
@@ -424,8 +478,9 @@ pub(crate) fn check_cancel() -> Result<()> {
 /// Reads the unlocked and total counts out of a profile achievements page. `None` when the page
 /// has no progress to show (private game details, or a game without stats).
 ///
-/// The player's list holds every achievement, locked ones too, so an empty list means there was
-/// nothing to read rather than nothing unlocked. Private game details look exactly like that.
+/// The player's list only holds unlocked achievements, so a game with none unlocked has an
+/// empty list. Its groups still say how many are completed (0), while private game details
+/// have no groups at all, which is how the two are told apart.
 pub fn parse_achievement_page(html: &str) -> Option<(u32, u32)> {
     let start = html.find("id=\"valve-ssr-data\"")?;
     let body = &html[start..];
@@ -445,10 +500,13 @@ pub fn parse_achievement_page(html: &str) -> Option<(u32, u32)> {
         }
         if q.query_key.get(2).map(|k| k.get()) == Some("\"user_achievements\"") {
             let player: page::Player = serde_json::from_str(data.get()).ok()?;
-            if player.achievements.is_empty() {
+            if !player.achievements.is_empty() {
+                unlocked = Some(player.achievements.values().filter(|a| a.unlocked).count() as u32);
+            } else if !player.groups.is_empty() {
+                unlocked = Some(player.groups.values().map(|g| g.completed_achievements).sum());
+            } else {
                 return None;
             }
-            unlocked = Some(player.achievements.values().filter(|a| a.unlocked).count() as u32);
         } else if let Ok(schema) = serde_json::from_str::<page::Schema>(data.get()) {
             // The schema ("schema_v2"). Archived groups were removed from the game.
             total = Some(schema.groups.iter().filter(|g| !g.archived).map(|g| g.achievements.len() as u32).sum());
@@ -501,6 +559,15 @@ mod page {
     pub struct Player<'a> {
         #[serde(borrow)]
         pub achievements: BTreeMap<Cow<'a, str>, Unlocked>,
+        /// Progress per group of achievements. Empty when the details are private.
+        #[serde(borrow, default)]
+        pub groups: BTreeMap<Cow<'a, str>, GroupProgress>,
+    }
+
+    #[derive(Deserialize)]
+    pub struct GroupProgress {
+        #[serde(default)]
+        pub completed_achievements: u32,
     }
 
     #[derive(Deserialize)]
@@ -565,6 +632,7 @@ pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, p
             progress(i + 1, games.len());
         }
         cache.checked = now;
+        cache.format = ACHIEVEMENTS_FORMAT;
         Ok(())
     })();
     save_achievements(steam64, &cache)?;
@@ -978,6 +1046,15 @@ mod tests {
         let ssr = serde_json::json!({ "renderContext": { "queryData": hidden.to_string() } });
         let html = format!("<script id=\"valve-ssr-data\">{ssr}</script>");
         assert_eq!(parse_achievement_page(&html), None, "not 0 of 2");
+
+        // Nothing unlocked yet: an empty list, but the groups say 0 completed.
+        let none_yet = serde_json::json!({ "queries": [
+            { "queryKey": ["achievements", 232090, "user_achievements", "1"], "state": { "data": { "achievements": {}, "groups": { "0": { "groupid": 0, "completed_achievements": 0 } } } } },
+            { "queryKey": ["achievements", 232090, "schema_v2"], "state": { "data": { "groups": [ { "achievements": [{}, {}, {}] } ] } } }
+        ]});
+        let ssr = serde_json::json!({ "renderContext": { "queryData": none_yet.to_string() } });
+        let html = format!("<script id=\"valve-ssr-data\">{ssr}</script>");
+        assert_eq!(parse_achievement_page(&html), Some((0, 3)));
     }
 
     #[test]
@@ -1050,6 +1127,14 @@ mod tests {
         cache.switch_to("NL");
         assert_eq!(cache.apps[&1].price_cents, Some(999), "Dutch prices come straight back");
         assert_eq!(store_due(&cache, &[1], "US", 10, DAY, false), Vec::<u32>::new(), "and the US ones are still fresh");
+    }
+
+    #[test]
+    fn reads_which_games_have_screenshots() {
+        let html = r#"<div onclick="javascript:SelectSharedFilesContentFilter({ 'appid': '0' });">All</div>
+            <div onclick="javascript:SelectSharedFilesContentFilter({ 'appid': '1030300' });">Silksong</div>
+            <div onclick="javascript:SelectSharedFilesContentFilter({ 'appid': '620' });">Portal 2</div>"#;
+        assert_eq!(parse_screenshot_games(html).into_iter().collect::<Vec<_>>(), vec![620, 1_030_300]);
     }
 
     #[test]

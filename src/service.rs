@@ -89,6 +89,8 @@ pub struct GameView {
     pub extras: crate::appinfo::Extras,
     pub installed_bytes: u64,
     pub family: bool,
+    /// Has screenshots, on this computer or on the profile.
+    pub screenshots: bool,
     /// Prices and review counts from the store, for the chosen region.
     pub store: Option<StoreView>,
     /// ProtonDB tier: platinum, gold, silver, bronze or borked.
@@ -148,6 +150,8 @@ pub struct Library {
     pub flags: Vec<FlagView>,
     pub draft: DraftState,
     pub online: OnlineState,
+    /// The user keeps their own collection order (see `set_ordering`).
+    pub ordered: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -278,6 +282,47 @@ struct SavedDraft {
     draft: Vec<Collection>,
 }
 
+// ---- the user's own collection order ------------------------------------------------------------
+
+#[derive(Default, Serialize, Deserialize)]
+struct Ordering {
+    enabled: bool,
+}
+
+fn ordering_path() -> Result<PathBuf> {
+    Ok(config::account_dir()?.join("collection-order.json"))
+}
+
+/// Whether this account keeps its own collection order.
+pub fn ordering_enabled() -> bool {
+    ordering_path().ok().and_then(|p| std::fs::read_to_string(p).ok()).and_then(|t| serde_json::from_str::<Ordering>(&t).ok()).is_some_and(|o| o.enabled)
+}
+
+fn save_ordering(enabled: bool) -> Result<()> {
+    let path = ordering_path()?;
+    std::fs::create_dir_all(path.parent().context("no parent")?)?;
+    std::fs::write(path, serde_json::to_vec(&Ordering { enabled })?)?;
+    Ok(())
+}
+
+/// Numbers the user's collections 01, 02, … so Steam, which sorts by name, keeps them in order.
+/// With `order`, those ids come first in that order; the rest keep their current place (by
+/// their number, and unnumbered ones, new or from before, alphabetically after). Three digits
+/// once there are more than 99.
+fn renumber(cols: &mut [Collection], order: Option<&[String]>) {
+    let mut user: Vec<usize> = (0..cols.len()).filter(|&i| !cols[i].dynamic).collect();
+    let place = |i: usize| {
+        let listed = order.and_then(|o| o.iter().position(|id| *id == cols[i].id));
+        (listed.unwrap_or(usize::MAX), smart::order_number(&cols[i].name).map_or(u32::MAX, |(n, _)| n), smart::key(&cols[i].name))
+    };
+    user.sort_by_key(|&i| place(i));
+    let width = if user.len() > 99 { 3 } else { 2 };
+    for (n, i) in user.into_iter().enumerate() {
+        let base = smart::base_name(&cols[i].name).to_owned();
+        cols[i].name = format!("{:0width$} {base}", n + 1);
+    }
+}
+
 fn draft_path() -> Result<PathBuf> {
     Ok(config::account_dir()?.join("draft.json"))
 }
@@ -403,12 +448,21 @@ impl Session {
     fn overlay_online(&mut self) {
         let hunted = hunters::load();
         let profile: online::AchievementCache = online::load_achievements(self.install.steam64());
+        let shots = online::load_screenshots(self.install.steam64());
         for g in &mut self.games {
+            g.screenshots |= shots.apps.contains(&g.appid);
             // Whichever is newer wins: the profile page, or what Steam wrote to disk after a
             // play session or after the game's page was opened in the library.
             if let Some(p) = profile.games.get(&g.appid).filter(|p| p.total > 0 && p.fetched >= g.achievements_at) {
                 g.achievements = Some(Achievements { unlocked: p.unlocked, total: p.total });
                 g.achievements_at = p.fetched;
+            }
+            // Never launched, so nothing can be unlocked: 0 of however many SteamHunters
+            // counts, rather than unknown. Playing it brings real progress.
+            if g.achievements.is_none() && !g.started() && g.kind == "game"
+                && let Some(h) = hunted.stats.get(&g.appid).filter(|h| h.achievements > 0)
+            {
+                g.achievements = Some(Achievements { unlocked: 0, total: h.achievements });
             }
             // A game update can add achievements after the last look. SteamHunters, checked
             // weekly, notices, so a "100%" game shows as incomplete until it is looked at again.
@@ -462,9 +516,22 @@ impl Session {
         describe(&self.pending_ops(), &self.games)
     }
 
+    /// The collections as the window shows them. With the user's own order on, in that order
+    /// and without the numbers that keep it in Steam.
     pub fn collection_views(&self) -> Vec<CollectionView> {
         let colors = load_colors();
-        self.draft.iter().map(|c| CollectionView { id: c.id.clone(), name: c.name.clone(), count: c.apps.len(), dynamic: c.dynamic, color: colors.get(&c.id).cloned() }).collect()
+        let ordered = ordering_enabled();
+        let mut views: Vec<(u32, CollectionView)> = self
+            .draft
+            .iter()
+            .map(|c| {
+                let number = if ordered { smart::order_number(&c.name).map_or(u32::MAX, |(n, _)| n) } else { 0 };
+                let name = if ordered { smart::base_name(&c.name).to_owned() } else { c.name.clone() };
+                (number, CollectionView { id: c.id.clone(), name, count: c.apps.len(), dynamic: c.dynamic, color: colors.get(&c.id).cloned() })
+            })
+            .collect();
+        views.sort_by_key(|(n, _)| *n);
+        views.into_iter().map(|(_, v)| v).collect()
     }
 
     pub fn library(&self) -> Library {
@@ -494,6 +561,7 @@ impl Session {
                 extras: g.extras,
                 installed_bytes: g.installed_bytes,
                 family: g.family,
+                screenshots: g.screenshots,
                 store: self.store.apps.get(&g.appid).filter(|s| s.fetched > 0 && !s.name.is_empty()).map(StoreView::from),
                 proton: self.proton.get(&g.appid).map(|p| p.tier.clone()).filter(|t| !t.is_empty()),
             })
@@ -504,6 +572,7 @@ impl Session {
             tags: self.tags.clone(),
             flags: rules::FLAGS.iter().map(|(n, id)| FlagView { id: *id, name: (*n).to_owned() }).collect(),
             draft: self.draft_state(),
+            ordered: ordering_enabled(),
             online: OnlineState {
                 country: self.store.country.clone(),
                 detected_region: steam::home_region(),
@@ -555,6 +624,10 @@ impl Session {
     fn edit(&mut self, label: &str, f: impl FnOnce(&mut Vec<Collection>) -> Result<()>) -> Result<()> {
         let before = self.draft.clone();
         f(&mut self.draft)?;
+        // New collections join the end of the user's order, and the numbers close any gaps.
+        if ordering_enabled() {
+            renumber(&mut self.draft, None);
+        }
         if same(&before, &self.draft) {
             return Ok(());
         }
@@ -606,7 +679,7 @@ impl Session {
         if name.is_empty() {
             bail!("give the collection a name");
         }
-        if self.draft.iter().any(|c| c.name.eq_ignore_ascii_case(name) && Some(c.id.as_str()) != except) {
+        if self.draft.iter().any(|c| smart::key(&c.name) == smart::key(name) && Some(c.id.as_str()) != except) {
             bail!("a collection called '{name}' already exists");
         }
         Ok(name.to_owned())
@@ -645,9 +718,14 @@ impl Session {
     pub fn rename_collection(&mut self, id: &str, name: &str) -> Result<()> {
         let from = self.find(id)?.name.clone();
         let name = self.check_name(name, Some(id))?;
-        self.edit(&format!("rename {from}"), |cols| {
+        let keep_place = ordering_enabled().then(|| smart::order_number(&from).map(|(n, _)| n)).flatten();
+        self.edit(&format!("rename {}", smart::base_name(&from)), |cols| {
             if let Some(c) = cols.iter_mut().find(|c| c.id == id) {
-                c.name.clone_from(&name);
+                // With the user's own order on, a rename keeps the collection where it is.
+                c.name = match keep_place {
+                    Some(n) => format!("{n:02} {}", smart::base_name(&name)),
+                    None => name.clone(),
+                };
             }
             Ok(())
         })?;
@@ -750,18 +828,30 @@ impl Session {
     /// Everything the user's rules ask for: the config file's rules plus each smart collection's.
     /// Criteria for collections that no longer exist are skipped, so deleting a collection
     /// isn't undone by the next Auto-organize.
+    /// What Auto-organize would change. It works with the collections you have: rules in the
+    /// rules file for a collection that doesn't exist are left out (and mentioned), and new
+    /// collections only come from presets or the New collection dialog.
     pub fn plan_rules(&self) -> Result<(Vec<Op>, Vec<String>)> {
         let (config, _) = config::load()?;
-        let mut all = config.rules;
         let existing: BTreeSet<String> = self.draft.iter().filter(|c| !c.dynamic).map(|c| smart::key(&c.name)).collect();
+        let (mut all, missing): (Vec<rules::Rule>, Vec<rules::Rule>) = config.rules.into_iter().partition(|r| existing.contains(&smart::key(&r.collection)));
+        let mut skipped: Vec<String> = missing.into_iter().map(|r| r.collection).collect();
+        skipped.dedup();
         for (name, rule) in smart::load()?.into_iter().filter(|(n, _)| existing.contains(n)) {
             all.push(rule.to_rule(&name)?);
         }
         let (games, mut notes) = self.games_with_rules(&mut all)?;
+        if !skipped.is_empty() {
+            notes.push(format!(
+                "Your rules file also mentions {}, which you don't have as {}. Those rules were left out; make the collection to use them.",
+                skipped.join(", "),
+                if skipped.len() == 1 { "a collection" } else { "collections" }
+            ));
+        }
         // A sticky "every achievement" collection keeps games that an update has since given
         // new achievements; point them out so the user can decide.
         for rule in all.iter().filter(|r| r.all_achievements == Some(true) && r.sticky) {
-            let Some(col) = self.draft.iter().find(|c| c.name.eq_ignore_ascii_case(&rule.collection)) else { continue };
+            let Some(col) = self.draft.iter().find(|c| smart::key(&c.name) == smart::key(&rule.collection)) else { continue };
             let behind: Vec<&str> = games
                 .iter()
                 .filter(|g| col.apps.contains(&g.appid) && g.achievements.is_some_and(|a| a.total > 0 && a.unlocked < a.total))
@@ -834,6 +924,65 @@ impl Session {
             smart::save(&all)?;
         }
         Ok((id, added))
+    }
+
+    /// Turns the user's own collection order on or off. On, each collection gets a number in
+    /// front of its name in Steam, which sorts by name, starting from Steam's current order;
+    /// off, the numbers come off again. Like any edit, it reaches Steam when saved.
+    pub fn set_ordering(&mut self, on: bool) -> Result<()> {
+        save_ordering(on)?;
+        if on {
+            self.edit("keep my own order", |cols| {
+                renumber(cols, Some(&[]));
+                Ok(())
+            })
+        } else {
+            self.edit("stop keeping my own order", |cols| {
+                for c in cols.iter_mut().filter(|c| !c.dynamic) {
+                    c.name = smart::base_name(&c.name).to_owned();
+                }
+                Ok(())
+            })
+        }
+    }
+
+    /// Puts the collections in this order (by id); any not listed keep their place after them.
+    pub fn set_order(&mut self, ids: &[String]) -> Result<()> {
+        if !ordering_enabled() {
+            bail!("turn on your own collection order in Settings first");
+        }
+        self.edit("reorder collections", |cols| {
+            renumber(cols, Some(ids));
+            Ok(())
+        })
+    }
+
+    /// Sets up a preset: creates its collections that don't exist yet, filled with what matches,
+    /// and gives criteria to ones that exist by the same name but have none. A collection that
+    /// already has its own criteria keeps them. Returns (created, given criteria, kept).
+    pub fn apply_preset(&mut self, id: &str) -> Result<(Vec<String>, Vec<String>, Vec<String>)> {
+        let preset = crate::presets::all().into_iter().find(|p| p.id == id).context("there's no such preset")?;
+        let stored = smart::load()?;
+        let (mut created, mut attached, mut kept) = (Vec::new(), Vec::new(), Vec::new());
+        for c in preset.collections {
+            let existing = self.draft.iter().find(|x| !x.dynamic && smart::key(&x.name) == smart::key(c.name)).map(|x| (x.id.clone(), x.name.clone()));
+            match existing {
+                Some((_, name)) if stored.contains_key(&smart::key(&name)) => kept.push(name),
+                Some((cid, name)) => {
+                    self.set_smart_rule(&cid, Some(c.rule.clone()))?;
+                    attached.push(name);
+                }
+                None => {
+                    self.create_smart_collection(c.name, &c.rule, true)?;
+                    created.push(c.name.to_owned());
+                }
+            }
+        }
+        // Collections that existed get their games on the next Auto-organize; do it now.
+        if !attached.is_empty() {
+            self.apply_rules()?;
+        }
+        Ok((created, attached, kept))
     }
 
     /// Smart rules by collection id, for the collections that currently exist.
@@ -1017,8 +1166,9 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
             .map(|g| online::AchievementHint { known_total: g.known_total.max(hunted.stats.get(&g.appid).map_or(0, |h| h.achievements)), ..*g })
             .filter(|g| (g.last_played > 0 || g.playtime > 0) && g.known_total > 0)
             .collect();
-        // A private profile is retried daily.
-        let skip = cache.private && now.saturating_sub(cache.checked) < 24 * 3600 && !job.force;
+        // A private profile is retried daily. Older versions could take a run of games with
+        // nothing unlocked for a private profile, so their verdict isn't trusted.
+        let skip = cache.private && cache.format >= online::ACHIEVEMENTS_FORMAT && now.saturating_sub(cache.checked) < 24 * 3600 && !job.force;
         let mut due = if skip { Vec::new() } else { online::achievements_due(&cache, &hints, now, job.force) };
         // Most recently played first: on a long first run, the games the user cares about now
         // fill in first.
@@ -1028,6 +1178,15 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
                 fail(format!("Achievements: {e:#}"));
             }
             saved();
+        }
+        // Which games have screenshots on the profile: one page, weekly.
+        if online::screenshots_due(job.steam64, now, job.force) {
+            progress("screenshots", 0, 1);
+            match online::refresh_screenshots(job.steam64, now) {
+                Ok(_) => saved(),
+                Err(e) => fail(format!("Screenshots: {e:#}")),
+            }
+            progress("screenshots", 1, 1);
         }
     }
 }
@@ -1167,6 +1326,22 @@ mod tests {
 
     fn col(id: &str, name: &str, apps: &[u32]) -> Collection {
         Collection { id: id.into(), name: name.into(), apps: apps.to_vec(), dynamic: false }
+    }
+
+    #[test]
+    fn numbering_keeps_the_users_order_in_names() {
+        let names = |cols: &[Collection]| cols.iter().map(|c| c.name.clone()).collect::<Vec<_>>();
+        // Turning it on starts from Steam's alphabetical order.
+        let mut cols = vec![col("b", "Playing", &[]), col("a", "Backlog", &[]), col("c", "Done", &[])];
+        renumber(&mut cols, Some(&[]));
+        assert_eq!(names(&cols), ["03 Playing", "01 Backlog", "02 Done"]);
+        // Moving Playing to the top.
+        renumber(&mut cols, Some(&["b".to_owned()]));
+        assert_eq!(names(&cols), ["01 Playing", "02 Backlog", "03 Done"]);
+        // A new collection joins the end.
+        cols.push(col("d", "Abandoned", &[]));
+        renumber(&mut cols, None);
+        assert_eq!(names(&cols)[3], "04 Abandoned");
     }
 
     #[test]

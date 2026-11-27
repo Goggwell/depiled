@@ -151,6 +151,7 @@ fn smart_rule(c: &Criteria, session: &Session) -> Result<depiled::smart::SmartRu
         tags: c.tags.iter().map(tag_id).collect::<Result<_>>()?,
         flags: c.flags.iter().map(|f| rules::flag_id(f).with_context(|| format!("unknown flag '{f}'"))).collect::<Result<_>>()?,
         condition: c.condition.as_deref().map(serde_json::from_str).transpose().context("--where isn't a valid condition")?,
+        sync: false,
     })
 }
 

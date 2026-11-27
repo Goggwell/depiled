@@ -67,22 +67,54 @@ pub fn resolve_tags(rules: &mut [Rule], names: &BTreeMap<u32, String>) -> Result
     Ok(())
 }
 
+/// Steam's store features ("categories"), by the names the store shows. Rules name them
+/// ignoring case. Features not listed here are still kept on each game; they just have no
+/// name to show.
 pub const FLAGS: &[(&str, u32)] = &[
-    ("multi-player", 1),
-    ("single-player", 2),
-    ("co-op", 9),
-    ("partial controller support", 18),
-    ("mmo", 20),
-    ("steam achievements", 22),
-    ("steam cloud", 23),
-    ("full controller support", 28),
-    ("steam trading cards", 29),
-    ("steam workshop", 30),
+    ("Single-player", 2),
+    ("Multi-player", 1),
+    ("Co-op", 9),
+    ("Online co-op", 38),
+    ("Shared/split screen", 24),
+    ("Shared/split screen co-op", 39),
+    ("Online PvP", 36),
+    ("Shared/split screen PvP", 37),
+    ("PvP", 49),
+    ("LAN co-op", 48),
+    ("LAN PvP", 47),
+    ("Cross-platform multiplayer", 27),
+    ("MMO", 20),
+    ("Remote Play Together", 44),
+    ("Remote Play on TV", 43),
+    ("Remote Play on tablet", 42),
+    ("Remote Play on phone", 41),
+    ("Full controller support", 28),
+    ("Partial controller support", 18),
+    ("Tracked controller support", 52),
+    ("VR supported", 53),
+    ("VR only", 54),
+    ("Steam Achievements", 22),
+    ("Steam Trading Cards", 29),
+    ("Steam Cloud", 23),
+    ("Steam Workshop", 30),
+    ("Steam Leaderboards", 25),
+    ("Stats", 15),
+    ("Steam Timeline", 63),
+    ("Family Sharing", 62),
+    ("In-app purchases", 35),
+    ("Includes level editor", 17),
+    ("Captions available", 13),
+    ("Commentary available", 14),
+    ("HDR available", 61),
+    ("Valve Anti-Cheat enabled", 8),
 ];
 
+/// The Steam feature that means a game has achievements.
+pub const ACHIEVEMENTS_FEATURE: u32 = 22;
+
 pub fn flag_id(name: &str) -> Option<u32> {
-    let name = name.trim().to_lowercase();
-    name.parse().ok().or_else(|| FLAGS.iter().find(|(n, _)| *n == name).map(|(_, id)| *id))
+    let name = name.trim();
+    name.parse().ok().or_else(|| FLAGS.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)).map(|(_, id)| *id))
 }
 
 impl Rule {
@@ -157,11 +189,11 @@ pub fn plan(rules: &[Rule], games: &[Game], current: &[Collection], now: u64) ->
     let by_name: BTreeMap<String, &Collection> = current
         .iter()
         .filter(|c| !c.dynamic && Collection::is_user_collection_id(&c.id))
-        .map(|c| (c.name.to_lowercase(), c))
+        .map(|c| (crate::smart::key(&c.name), c))
         .collect();
     let member_sets: BTreeMap<&str, BTreeSet<u32>> =
         by_name.iter().map(|(n, c)| (n.as_str(), c.apps.iter().copied().collect())).collect();
-    let members = |name: &str| -> BTreeSet<u32> { member_sets.get(name.to_lowercase().as_str()).cloned().unwrap_or_default() };
+    let members = |name: &str| -> BTreeSet<u32> { member_sets.get(crate::smart::key(name).as_str()).cloned().unwrap_or_default() };
     // Which collections (by id) each game is in, for conditions that ask.
     let mut filed_in: BTreeMap<u32, Vec<String>> = BTreeMap::new();
     for c in current.iter().filter(|c| !c.dynamic) {
@@ -171,14 +203,14 @@ pub fn plan(rules: &[Rule], games: &[Game], current: &[Collection], now: u64) ->
     }
     // A rule is skipped for games the user keeps in one of its excluded collections.
     let applies = |r: &Rule, g: &Game| {
-        !r.not_in_collections.iter().any(|n| member_sets.get(n.to_lowercase().as_str()).is_some_and(|s| s.contains(&g.appid)))
+        !r.not_in_collections.iter().any(|n| member_sets.get(crate::smart::key(n).as_str()).is_some_and(|s| s.contains(&g.appid)))
             && r.matches_in(g, now, filed_in.get(&g.appid).map_or(&[], Vec::as_slice))
     };
 
     let mut wants: BTreeMap<String, Want> = BTreeMap::new();
     let add = |wants: &mut BTreeMap<String, Want>, name: &str, app: u32, put: bool| {
         let w = wants
-            .entry(name.to_lowercase())
+            .entry(crate::smart::key(name))
             .or_insert_with(|| Want { name: name.to_owned(), add: BTreeSet::new(), remove: BTreeSet::new() });
         if put { w.add.insert(app) } else { w.remove.insert(app) };
     };
@@ -221,7 +253,7 @@ pub fn plan(rules: &[Rule], games: &[Game], current: &[Collection], now: u64) ->
 
     let mut ops = Vec::new();
     for want in wants.values() {
-        match by_name.get(&want.name.to_lowercase()) {
+        match by_name.get(&crate::smart::key(&want.name)) {
             None => {
                 if !want.add.is_empty() {
                     ops.push(Op::Create { id: crate::catalog::new_id(), name: want.name.clone(), apps: want.add.iter().copied().collect() });

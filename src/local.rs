@@ -133,6 +133,7 @@ pub fn library(install: &SteamInstall, in_collections: &BTreeSet<u32>) -> Result
     let play = playtime(install).unwrap_or_default();
     let progress = achievements(install);
     let sizes = installed(install);
+    let shots = screenshots(install);
     let family_games = family.iter().filter(|id| info.get(id).is_some_and(|a| a.kind == Kind::Game)).copied();
 
     let played_free = play.iter().filter(|(id, p)| (p.minutes > 0 || p.last_played > 0) && info.get(id).is_some_and(|a| a.free)).map(|(id, _)| *id);
@@ -172,12 +173,37 @@ pub fn library(install: &SteamInstall, in_collections: &BTreeSet<u32>) -> Result
                 installed_bytes: sizes.get(&appid).copied().unwrap_or(0),
                 family: family.contains(&appid) && !owned.contains(&appid),
                 change: app.change,
+                screenshots: shots.contains(&appid),
                 online: crate::model::Online::default(),
             })
         })
         .collect();
     out.extend(shortcuts(install).unwrap_or_default());
     Ok(out)
+}
+
+/// Games with screenshots Steam saved on this computer for the account. Steam lists them in
+/// `userdata/<account>/760/screenshots.vdf` and keeps the files under `760/remote/<app>`.
+pub fn screenshots(install: &SteamInstall) -> std::collections::HashSet<u32> {
+    let base = install.dir.join("userdata").join(install.account_id.to_string()).join("760");
+    let mut out = std::collections::HashSet::new();
+    if let Some(root) = std::fs::read_to_string(base.join("screenshots.vdf")).ok().and_then(|t| vdf::parse_text(&t).ok()) {
+        for (id, shots) in root.get("Screenshots").map(Value::entries).unwrap_or_default() {
+            if let Ok(id) = id.parse::<u32>()
+                && !shots.entries().is_empty()
+            {
+                out.insert(id);
+            }
+        }
+    }
+    for entry in std::fs::read_dir(base.join("remote")).into_iter().flatten().flatten() {
+        if let Ok(id) = entry.file_name().to_string_lossy().parse::<u32>()
+            && std::fs::read_dir(entry.path().join("screenshots")).is_ok_and(|mut d| d.any(|f| f.is_ok_and(|f| f.path().is_file())))
+        {
+            out.insert(id);
+        }
+    }
+    out
 }
 
 /// Installed apps and their size on disk, from every Steam library folder.

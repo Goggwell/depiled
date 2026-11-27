@@ -84,6 +84,10 @@ fn fact<'a>(field: &str, g: &'a Game, ctx: &Context<'a>) -> Option<Fact<'a>> {
         "early_access" => Fact::Bool(g.extras.early_access),
         "family" => Fact::Bool(g.family),
         "on_sale" => Fact::Bool(g.online.discount > 0),
+        // Steam's own "Steam Achievements" feature, or a count from anywhere. Games without
+        // either have none.
+        "has_screenshots" => Fact::Bool(g.screenshots),
+        "has_achievements" => Fact::Bool(total > 0 || g.categories.contains(&crate::rules::ACHIEVEMENTS_FEATURE)),
         "completed" => Fact::Bool(g.achievements.is_some_and(|a| a.total > 0 && a.unlocked >= a.total.max(total))),
         "tags" => Fact::Ids(&g.tags),
         "features" => Fact::Ids(&g.categories),

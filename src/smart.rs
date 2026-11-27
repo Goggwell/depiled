@@ -29,6 +29,9 @@ pub struct SmartRule {
     /// Further conditions with AND, OR and NOT, as built in the app.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub condition: Option<crate::cond::Cond>,
+    /// Also take games out when they stop matching, not just add new ones.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sync: bool,
 }
 
 impl SmartRule {
@@ -63,6 +66,7 @@ impl SmartRule {
         rule.has_flags = self.flags.iter().map(ToString::to_string).collect();
         rule.has_tags = self.tags.iter().map(ToString::to_string).collect();
         rule.condition.clone_from(&self.condition);
+        rule.sync = self.sync;
         rule.validate()?;
         Ok(rule)
     }
@@ -75,8 +79,23 @@ fn path() -> Result<PathBuf> {
 /// Keyed by lower-cased collection name, like the rules file.
 pub type Rules = BTreeMap<String, SmartRule>;
 
+/// How a collection is looked up by name: ignoring case, and ignoring the order number
+/// Depiled puts in front when the user keeps their own order ("03 Playing" is "playing").
 pub fn key(name: &str) -> String {
-    name.trim().to_lowercase()
+    base_name(name).to_lowercase()
+}
+
+/// A collection's name without its order number.
+pub fn base_name(name: &str) -> &str {
+    let name = name.trim();
+    order_number(name).map_or(name, |(_, rest)| rest)
+}
+
+/// The order number in front of a name and the rest of it: two or three digits and a space.
+pub fn order_number(name: &str) -> Option<(u32, &str)> {
+    let digits = name.bytes().take_while(u8::is_ascii_digit).count();
+    let rest = name.get(digits..)?.strip_prefix(' ')?;
+    ((2..=3).contains(&digits) && !rest.trim().is_empty()).then(|| (name[..digits].parse().ok(), rest.trim())).and_then(|(n, r)| Some((n?, r)))
 }
 
 pub fn load_from(path: &Path) -> Result<Rules> {
@@ -111,6 +130,18 @@ mod tests {
     use super::*;
 
     #[test]
+    fn order_numbers_are_ignored_when_matching_names() {
+        assert_eq!(key("03 Playing"), "playing");
+        assert_eq!(key("Playing"), "playing");
+        assert_eq!(base_name("100 Later"), "Later");
+        // A name that merely starts with a number keeps it.
+        assert_eq!(key("7 Days to Die"), "7 days to die");
+        assert_eq!(key("2048"), "2048");
+        assert_eq!(key("12 "), "12");
+        assert_eq!(order_number("04 Co-op"), Some((4, "Co-op")));
+    }
+
+    #[test]
     fn criteria_map_onto_engine_rules() {
         let smart = SmartRule {
             played: Some("idle".into()),
@@ -119,6 +150,7 @@ mod tests {
             flags: vec![2, 23],
             tags: vec![1667],
             condition: None,
+            sync: false,
         };
         let rule = smart.to_rule("Scary").unwrap();
         assert_eq!(rule.played, Some(true));
