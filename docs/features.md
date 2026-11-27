@@ -48,9 +48,25 @@ It runs on Windows 10 and 11 (64-bit and 32-bit) and on macOS (Apple silicon and
 The installer is about 2 MB. Depiled uses the system's built-in web view (WebView2 on
 Windows, which comes with Windows 10 and 11), so it doesn't ship its own browser.
 
-**Newer builds.** A [nightly pre-release](https://github.com/Goggwell/depiled/releases/tag/nightly)
-is rebuilt after every change to the code. Each nightly build's installers also stay
-downloadable for 30 days from the
+**Updating.** You only download Depiled once. When a new version is out, an **Update to
+<version>** button appears in the status bar; it downloads the update with a progress bar,
+installs it and restarts Depiled. Changes you haven't saved to Steam yet are still there
+afterwards. Under **Settings → Updates** you can check by hand, turn off the check at
+startup, and choose what to get:
+
+- **Releases:** numbered versions.
+- **Nightly builds:** a build made after every change to the code, numbered after the next
+  release (for example `0.2.1-nightly.57`). You get fixes first, with less testing.
+  Switching back to Releases offers the next numbered version once it's out.
+
+Every update is signed when it's built, and Depiled won't install one whose signature
+doesn't match. (That's separate from Windows and macOS code signing, which the installers
+don't have yet.) Versions before 0.2.1 can't update themselves, so install 0.2.1 by hand
+once.
+
+Nightly installers are also on the
+[nightly pre-release](https://github.com/Goggwell/depiled/releases/tag/nightly), and each
+build stays downloadable for 30 days from the
 [Actions tab](https://github.com/Goggwell/depiled/actions/workflows/nightly.yml).
 
 **Uninstalling.** Use Windows' **Installed apps** (or delete the app on macOS). Your
@@ -232,7 +248,7 @@ computer, so the app works the same with no connection.
 | --- | --- | --- |
 | Achievement progress | your public Steam profile | after you play a game, when an update adds achievements, and otherwise every six to eight months |
 | Prices, sales, sale end dates, review counts | the Steam store, for your region | weekly |
-| Time to unlock every achievement | [SteamHunters](https://steamhunters.com) | weekly, and right away for new games |
+| Time to unlock every achievement | [SteamHunters](https://steamhunters.com) | when Steam reports the game changed, monthly otherwise, and right away for new games |
 | How well it runs on Linux and Steam Deck | [ProtonDB](https://www.protondb.com) | about monthly; settled ratings every three months or so |
 
 - **Region.** Prices follow your computer's region, or one you pick in Settings. Prices for
@@ -266,9 +282,10 @@ The keyboard button in the toolbar lists these too.
 - Depiled doesn't use Steam's debug port. Some tools turn it on to control Steam, and while
   it's on, any program on the computer can do the same. If an older version of Depiled
   switched it on, Settings offers to switch it off.
-- With details from the internet off, nothing leaves your computer. With them on, Depiled
-  contacts the Steam store, your public Steam profile page, SteamHunters and ProtonDB, and
-  nothing else.
+- With details from the internet off, nothing about your library leaves your computer. With
+  them on, Depiled contacts the Steam store, your public Steam profile page, SteamHunters and
+  ProtonDB, and nothing else. The update check asks GitHub for the newest version and sends
+  nothing about you; it can be turned off in Settings.
 - Before every save, a copy of Steam's own collection files is kept. You can also point
   `backup_dir` in `config.toml` at a synced folder for off-computer backups.
 

@@ -45,8 +45,12 @@ The installers aren't code-signed yet. On Windows, choose **More info**, then **
 if SmartScreen stops it. On a Mac, right-click the app and choose **Open** the first time.
 
 Steam needs to have been signed in on the computer at least once; Depiled finds it on its
-own. The [nightly pre-release](https://github.com/Goggwell/depiled/releases/tag/nightly) has
-the newest changes between releases.
+own.
+
+After that, Depiled updates itself. It checks for a new version when it starts, and an
+**Update** button in the status bar downloads it, shows the progress and restarts into it.
+Unsaved changes are kept. In Settings you can switch to nightly builds, made after every
+change, or turn the check off. Updates are signed, and the app refuses one that isn't.
 
 ## How saving works
 

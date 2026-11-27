@@ -286,10 +286,26 @@ it's newer than the profile.
 | Source | Request | Batch | Refresh |
 | --- | --- | --- | --- |
 | Steam store (`IStoreBrowseService/GetItems`) | prices, sale end dates, review counts, release dates | 100 games per request | weekly, per region |
-| SteamHunters (`/api/apps`) | time to 100%, players, achievement count | 100 games per request | weekly, plus new games right away |
-| ProtonDB (`/api/v1/reports/summaries/<app>.json`) | Linux rating | one per game | about monthly, less for settled ratings and games with no reports |
+| SteamHunters (`/api/apps`) | time to 100%, players, achievement count | 100 games per request | when Steam reports the game changed, monthly otherwise, new games right away |
+| ProtonDB (`/api/v1/reports/summaries/<app>.json`) | Linux rating | one per game, four at a time | about monthly, less for settled ratings and games with no reports |
 
 All of them are keyless public endpoints.
+
+**Can't it skip data that hasn't changed?**
+
+Only if something says so before the download. Comparing a fresh answer with the cache
+saves nothing, because by then it's been downloaded. So Depiled uses two kinds of "nothing
+changed" signal:
+
+- **From the server.** ProtonDB sends ETags (see below). I checked the others: the store,
+  SteamHunters and the profile pages send no ETag or Last-Modified, and none of them takes
+  an "updated since" parameter.
+- **From Steam itself.** Steam's `appinfo.vdf` keeps a change number for every app, which
+  goes up whenever its store data, a branch or a depot changes. Depiled records the number
+  when it asks SteamHunters about a game and asks again only once it moves (at most daily),
+  with a monthly catch-all for completion times drifting as more people play. A game update
+  that adds achievements moves the number, so new achievements are still caught right away.
+  On a quiet week that skips most of the library without a single request.
 
 **How is "due" decided without everything expiring at once?**
 
@@ -302,11 +318,26 @@ round-numbered app IDs bunched onto a few days, hence the better hash.
 
 - **One HTTP client for the app.** Connections stay open, so a run of requests to the same
   site costs one TLS handshake. Responses are gzip-compressed.
-- **Sources run in parallel, sites don't.** There are three lanes: the store; SteamHunters
-  then your profile; and ProtonDB. Each site still sees one request at a time with a pause
-  between them, so it's exactly as polite as running them in a row. A first run takes as long
-  as the slowest lane instead of the sum. SteamHunters goes first in its lane because its
-  achievement counts decide which profile pages are worth asking for.
+- **Sources run in parallel, with a pace per site.** There are three lanes: the store;
+  SteamHunters then your profile; and ProtonDB. Each site has its own minimum gap between
+  request starts, measured from start to start, so a slow answer isn't followed by a full
+  pause as well. A first run takes as long as the slowest lane instead of the sum.
+  SteamHunters goes first in its lane because its achievement counts decide which profile
+  pages are worth asking for.
+- **A little concurrency where it's cheap.** ProtonDB's ratings are tiny files on a CDN, one
+  per game, so four lookups run at once, still sharing one pace (150 ms between starts).
+  On a first run that's about twice as fast: 200 ratings took 30 seconds. The other
+  sites stay one request at a time.
+- **Retries for passing failures.** Timeouts, dropped connections, server errors and "429
+  Too Many Requests" are tried again, up to three tries, after 2 then 8 seconds or as long
+  as the site's `Retry-After` asks. A 429 also doubles that site's gap for the rest of the
+  run, so it isn't hit again straight away. Anything else, like a 404, is an answer, not a
+  failure.
+- **Typed, lean parsing.** Answers are read into structs with only the fields Depiled uses.
+  The profile page's data block holds every achievement's name, description and icon; the
+  parser borrows from the page text and skips all of that without building it, and only
+  counts achievements in the schema. Numbers are read whether Steam sends them as numbers or
+  as text, so one odd field doesn't fail a whole batch.
 - **Revalidation where the server supports it.** ProtonDB sends ETags, so a recheck sends
   `If-None-Match` and an unchanged rating comes back as "304 Not Modified" with no body.
   The Steam store and SteamHunters answers don't offer usable validators, so they rely on
@@ -353,8 +384,11 @@ It's a tool people operate, so precision and calm over decoration:
 - **Amber means one thing:** changes that aren't in Steam yet. It's on the status bar, the
   save button and the dots on changed collections, and nowhere else, not even the focus
   ring (that's ink). If you see amber, you have something to save.
-- **One typeface, Bricolage Grotesque,** using its optical-size axis: small text gets an
-  open, quiet cut and titles get the full character, from one font file.
+- **Two typefaces, each with one job.** Atkinson Hyperlegible Next for everything you read
+  and press: it was designed for legibility, so I, l and 1 or O and 0 can't be confused in a
+  dense list of names and numbers, and its tabular figures keep table columns aligned.
+  Bricolage Grotesque, with its optical-size axis, for titles, where some character helps.
+  Both ship inside the app.
 - **Collections are shelves with coloured labels.** The colour mark appears in the sidebar,
   under covers, in table rows and next to the title, so a collection is recognizable
   anywhere.
@@ -399,6 +433,24 @@ GitHub Actions:
   downloadable for 30 days.
 - **A version tag:** builds the four installers (Windows 64- and 32-bit, macOS Apple silicon
   and Intel) and attaches them to a release.
+
+**How does the app update itself?**
+
+With Tauri's updater. Both workflows sign the update files with a private key kept as a
+repository secret (only the workflows make update files, through `tauri.updates.conf.json`,
+so building from source needs no key), and attach a `latest.json` that lists each platform's file and
+signature. The app has the matching public key built in. It fetches `latest.json` from the
+newest release (or from the nightly pre-release, if you chose nightly builds), and if
+there's something newer, downloads it while reporting progress, checks the signature and
+installs it. On Windows that runs the installer in its quiet mode, which restarts the app;
+on macOS the app bundle is swapped and the app restarts.
+
+Nightly builds are numbered after the next release (`0.2.1-nightly.57` after 0.2.0), so
+each one is distinct. On the nightly channel, any build that isn't the one running counts
+as newer, since the nightly pre-release always holds the newest build of main.
+
+Two details: the install waits for the app's state lock, so it can't land halfway through a
+save to Steam; and unsaved changes are already on disk, so they survive the restart.
 
 ## Trade-offs and what's next
 
