@@ -171,6 +171,7 @@ pub fn library(install: &SteamInstall, in_collections: &BTreeSet<u32>) -> Result
                 publishers: app.publishers.clone(),
                 extras: app.extras,
                 installed_bytes: sizes.get(&appid).copied().unwrap_or(0),
+                download_bytes: app.download_bytes,
                 family: family.contains(&appid) && !owned.contains(&appid),
                 change: app.change,
                 screenshots: shots.contains(&appid),

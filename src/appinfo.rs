@@ -61,6 +61,10 @@ pub struct AppInfo {
     /// Steam's change number for the app's info. It goes up whenever the store page, a branch
     /// or a depot changes, so an unchanged number means nothing about the game has.
     pub change: u32,
+    /// Roughly what installing it on Windows downloads, in bytes: the depots for Windows (or
+    /// for every system), in English or no particular language, leaving out DLC and shared
+    /// redistributables. 0 if Steam lists no sizes.
+    pub download_bytes: u64,
 }
 
 /// Store details used for filters. Zero means unknown.
@@ -137,6 +141,29 @@ pub fn parse(data: &[u8]) -> Result<HashMap<u32, AppInfo>> {
     Ok(apps)
 }
 
+/// Adds up the sizes Steam lists for the depots a Windows player in English would get.
+fn download_bytes(app: &Value) -> u64 {
+    let Some(depots) = app.get("depots") else { return 0 };
+    depots
+        .entries()
+        .iter()
+        .filter(|(id, d)| id.parse::<u32>().is_ok() && matches!(d, Value::Obj(_)))
+        .filter(|(_, d)| {
+            let config = d.get("config");
+            let os = config.and_then(|c| c.get("oslist")).and_then(Value::as_str).unwrap_or_default();
+            let language = config.and_then(|c| c.get("language")).and_then(Value::as_str).unwrap_or_default();
+            (os.is_empty() || os.contains("windows"))
+                && (language.is_empty() || language == "english")
+                && d.get("dlcappid").is_none()
+                && d.get("sharedinstall").and_then(Value::as_i64) != Some(1)
+                && d.get("depotfromapp").is_none()
+        })
+        // Newer files give each depot's size under its public manifest; older ones as maxsize.
+        .filter_map(|(_, d)| d.path(&["manifests", "public", "size"]).or_else(|| d.get("maxsize")).and_then(Value::as_i64))
+        .map(|n| n.max(0) as u64)
+        .sum()
+}
+
 fn extract(appid: u32, root: &Value) -> Option<AppInfo> {
     let app = root.get("appinfo")?;
     let common = app.get("common")?;
@@ -186,5 +213,6 @@ fn extract(appid: u32, root: &Value) -> Option<AppInfo> {
         free: [app.path(&["extended", "isfreeapp"]), common.get("isfreeapp")].into_iter().any(|v| v.and_then(Value::as_i64) == Some(1)),
         extras,
         change: 0,
+        download_bytes: download_bytes(app),
     })
 }

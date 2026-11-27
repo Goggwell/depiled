@@ -114,16 +114,30 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// sooner. Several threads can share one; they take turns.
 pub(crate) struct Pace {
     slot: Mutex<(Duration, Option<Instant>)>,
+    /// Long pauses left for a site that keeps saying "too many requests" (see `patient`).
+    patience: Mutex<usize>,
+    long_pause: Duration,
 }
 
 /// Waits after a failure that is likely to pass, before the second and third tries.
 const BACKOFF_SECS: [u64; 2] = [2, 8];
 /// Longest wait a site can ask for before trying again.
 const MAX_RETRY_AFTER_SECS: u64 = 60;
+/// How long a patient run waits when a site is still saying "too many requests" after the
+/// short backoff, before carrying on.
+const LONG_PAUSE_SECS: u64 = 90;
 
 impl Pace {
     pub(crate) fn new(gap_ms: u64) -> Self {
-        Self { slot: Mutex::new((Duration::from_millis(gap_ms), None)) }
+        Self { slot: Mutex::new((Duration::from_millis(gap_ms), None)), patience: Mutex::new(0), long_pause: Duration::from_secs(LONG_PAUSE_SECS) }
+    }
+
+    /// For long runs against sites that limit how fast they're asked (Steam's community pages,
+    /// ProtonDB): when the short backoff isn't enough, wait `LONG_PAUSE_SECS` and carry on,
+    /// up to `pauses` times, instead of stopping the run. A big library then finishes in one
+    /// go, just more slowly.
+    pub(crate) fn patient(gap_ms: u64, pauses: usize) -> Self {
+        Self { slot: Mutex::new((Duration::from_millis(gap_ms), None)), patience: Mutex::new(pauses), long_pause: Duration::from_secs(LONG_PAUSE_SECS) }
     }
 
     /// Waits until the next request may start, then checks for a stop.
@@ -137,6 +151,13 @@ impl Pace {
             slot.1 = Some(Instant::now());
         }
         check_cancel()
+    }
+
+    fn take_long_pause(&self) -> bool {
+        let mut left = lock(&self.patience);
+        let ok = *left > 0;
+        *left = left.saturating_sub(1);
+        ok
     }
 
     /// The site asked to slow down: twice the gap for the rest of the run, up to 10 seconds.
@@ -167,8 +188,17 @@ impl Pace {
                 Err(e) if transient(&e) => (None, anyhow!("couldn't reach {site}: {e}")),
                 Err(e) => return Err(anyhow!("couldn't reach {site}: {e}")),
             };
-            let Some(wait) = backoff.next() else { return Err(problem) };
-            pause(Duration::from_secs(asked.unwrap_or(wait).min(MAX_RETRY_AFTER_SECS)))?;
+            let wait = match backoff.next() {
+                Some(wait) => asked.unwrap_or(wait).min(MAX_RETRY_AFTER_SECS),
+                // Still limited after the short tries: a patient run takes a long break.
+                None if self.take_long_pause() => {
+                    backoff = BACKOFF_SECS.into_iter();
+                    pause(self.long_pause.max(Duration::from_secs(asked.unwrap_or(0).min(MAX_RETRY_AFTER_SECS * 5))))?;
+                    continue;
+                }
+                None => return Err(problem),
+            };
+            pause(Duration::from_secs(wait))?;
         }
     }
 }
@@ -419,6 +449,17 @@ pub struct AchievementCache {
 
 pub(crate) const ACHIEVEMENTS_FORMAT: u32 = 1;
 
+/// Least time between two achievement pages.
+pub const ACHIEVEMENT_GAP_MS: u64 = 1200;
+
+/// Roughly how long a ProtonDB run of `n` lookups takes, for the estimate shown before a
+/// long first run.
+pub fn proton_seconds(n: usize) -> u64 {
+    let gap = if n > PROTON_BIG_RUN { PROTON_BIG_GAP_MS } else { PROTON_GAP_MS };
+    // Starts are spaced by the gap; with a few at once the round trip mostly overlaps.
+    (n as u64 * gap.max(250 / if n > PROTON_BIG_RUN { PROTON_BIG_AT_ONCE } else { PROTON_AT_ONCE } as u64)) / 1000
+}
+
 /// What Depiled knows about a game when deciding whether its achievement page is worth a
 /// request.
 #[derive(Debug, Clone, Copy, Default)]
@@ -596,7 +637,8 @@ pub fn refresh_achievements(steam64: u64, games: &[AchievementHint], now: u64, p
     let mut cache = load_achievements(steam64);
     let agent = agent();
     let mut misses = 0;
-    let pace = Pace::new(1200);
+    // Steam's community pages are the likeliest to say "slow down" on a big library.
+    let pace = Pace::patient(ACHIEVEMENT_GAP_MS, 20);
     // Persist the partial batch on cancellation and on transport errors.
     let result = (|| -> Result<()> {
         for (i, hint) in games.iter().enumerate() {
@@ -935,6 +977,11 @@ pub fn proton_due(cache: &BTreeMap<u32, Proton>, appids: &[u32], now: u64, force
 /// Ratings are looked up this many at a time. Each is a tiny file from ProtonDB's CDN, so the
 /// time goes on the round trip, not the transfer; starts are still spaced by the shared pace.
 const PROTON_AT_ONCE: usize = 4;
+/// Past this many lookups in one run (a big library's first run), fewer at once and further
+/// apart, so a long run stays well inside what the site tolerates.
+const PROTON_BIG_RUN: usize = 1500;
+const PROTON_BIG_AT_ONCE: usize = 2;
+const PROTON_BIG_GAP_MS: u64 = 300;
 /// Least time between the starts of two lookups, across all of them.
 const PROTON_GAP_MS: u64 = 150;
 
@@ -977,13 +1024,15 @@ fn fetch_proton(pace: &Pace, agent: &ureq::Agent, appid: u32, known: Option<Prot
 pub fn refresh_proton(appids: &[u32], now: u64, progress: &mut (dyn FnMut(usize, usize) + Send)) -> Result<usize> {
     let cache: Mutex<BTreeMap<u32, Proton>> = Mutex::new(load(PROTON_FILE));
     let agent = agent();
-    let pace = Pace::new(PROTON_GAP_MS);
+    let big = appids.len() > PROTON_BIG_RUN;
+    let pace = Pace::patient(if big { PROTON_BIG_GAP_MS } else { PROTON_GAP_MS }, 20);
+    let workers = if big { PROTON_BIG_AT_ONCE } else { PROTON_AT_ONCE };
     let next = AtomicUsize::new(0);
     let done = AtomicUsize::new(0);
     let failed: Mutex<Option<anyhow::Error>> = Mutex::new(None);
     let progress = Mutex::new(progress);
     std::thread::scope(|scope| {
-        for _ in 0..PROTON_AT_ONCE.min(appids.len()) {
+        for _ in 0..workers.min(appids.len()) {
             scope.spawn(|| {
                 // Each worker takes the next game until none are left, or one fails or is
                 // stopped, which ends the others after their lookup in flight.
@@ -1187,6 +1236,23 @@ mod tests {
         });
         assert_eq!(tries, 3);
         assert!(err.unwrap_err().to_string().contains("503"));
+    }
+
+    #[test]
+    fn a_patient_run_waits_out_a_rate_limit_instead_of_stopping() {
+        let mut pace = Pace::patient(0, 1);
+        pace.long_pause = Duration::from_millis(10);
+        // Limited for three tries, then fine after the long pause.
+        let mut tries = 0;
+        let result = pace.send("site", || {
+            tries += 1;
+            answer(if tries <= 3 { 429 } else { 200 }, Some("0"))
+        });
+        assert_eq!((result.unwrap().status().as_u16(), tries), (200, 4));
+        // With no pauses left, the next run of limits gives up as before.
+        let mut tries = 0;
+        assert!(pace.send("site", || { tries += 1; answer(429, Some("0")) }).is_err());
+        assert_eq!(tries, 3);
     }
 
     #[test]

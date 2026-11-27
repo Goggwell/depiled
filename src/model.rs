@@ -66,6 +66,10 @@ pub struct Game {
     /// Bytes on disk, 0 if not installed.
     #[serde(default)]
     pub installed_bytes: u64,
+    /// Roughly what installing it downloads, from Steam's own app data (see
+    /// `AppInfo::download_bytes`). 0 if unknown.
+    #[serde(default, skip_serializing_if = "is_zero_u64")]
+    pub download_bytes: u64,
     /// Lent by someone in the account's Steam Family rather than owned.
     #[serde(default)]
     pub family: bool,
@@ -95,6 +99,10 @@ pub struct Online {
     pub achievements: u32,
 }
 
+fn is_zero_u64(n: &u64) -> bool {
+    *n == 0
+}
+
 fn is_zero(n: &u32) -> bool {
     *n == 0
 }
@@ -122,6 +130,7 @@ impl Default for Game {
             publishers: Vec::new(),
             extras: crate::appinfo::Extras::default(),
             installed_bytes: 0,
+            download_bytes: 0,
             family: false,
             screenshots: false,
             change: 0,

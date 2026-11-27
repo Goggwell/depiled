@@ -76,6 +76,8 @@ fn fact<'a>(field: &str, g: &'a Game, ctx: &Context<'a>) -> Option<Fact<'a>> {
         "price" => Fact::Num(g.online.price_cents.map(|c| c as f64 / 100.0)),
         "discount" => n(f64::from(g.online.discount)),
         "size_gb" => known(g.installed_bytes as f64 / 1_073_741_824.0),
+        // Installed size when it's installed, otherwise what installing it would download.
+        "download_gb" => known(if g.installed_bytes > 0 { g.installed_bytes } else { g.download_bytes } as f64 / 1_073_741_824.0),
         "played" => Fact::Choice(if g.started() { "played" } else { "never" }),
         "deck" => Fact::Choice(["unknown", "unsupported", "playable", "verified"][usize::from(g.extras.deck.min(3))]),
         "proton" => Fact::Choice(if g.online.proton.is_empty() { "none" } else { &g.online.proton }),

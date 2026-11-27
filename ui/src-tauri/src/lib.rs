@@ -263,11 +263,13 @@ struct OnlineProgress {
 /// events; the window reloads the library when it finishes. Returns false if a run is already
 /// going.
 #[tauri::command]
-async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country: String, force: bool) -> Res<bool> {
+async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country: String, force: bool) -> Res<Option<service::OnlinePlan>> {
     let job = with(state, move |s| s.online_job(&country, force)).await?;
     if job.settings.online_stats != Some(true) || ONLINE.swap(true, Ordering::SeqCst) {
-        return Ok(false);
+        return Ok(None);
     }
+    // What's about to be fetched, so the window can say when it will take a while.
+    let plan = service::plan_online(&job);
     depiled::online::CANCEL.store(false, Ordering::Relaxed);
     std::thread::spawn(move || {
         // Sources run side by side, so progress is added up across them: the window shows the
@@ -294,7 +296,7 @@ async fn refresh_online(app: tauri::AppHandle, state: State<'_, Shared>, country
         let changed = changed.load(Ordering::Relaxed) || !errors.is_empty();
         let _ = app.emit("online", OnlineProgress { task: String::new(), active: Vec::new(), done: 0, total: 0, finished: true, changed, errors });
     });
-    Ok(true)
+    Ok(Some(plan))
 }
 // ---- bug reports and crashes -------------------------------------------------------------------
 

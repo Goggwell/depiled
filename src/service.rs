@@ -88,6 +88,8 @@ pub struct GameView {
     pub hunters: Option<Stats>,
     pub extras: crate::appinfo::Extras,
     pub installed_bytes: u64,
+    /// Roughly what installing it downloads, 0 if unknown.
+    pub download_bytes: u64,
     pub family: bool,
     /// Has screenshots, on this computer or on the profile.
     pub screenshots: bool,
@@ -560,6 +562,7 @@ impl Session {
                 hunters: self.hunters.get(&g.appid).copied(),
                 extras: g.extras,
                 installed_bytes: g.installed_bytes,
+                download_bytes: g.download_bytes,
                 family: g.family,
                 screenshots: g.screenshots,
                 store: self.store.apps.get(&g.appid).filter(|s| s.fetched > 0 && !s.name.is_empty()).map(StoreView::from),
@@ -1155,24 +1158,7 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
         }
     }
     if s.online_achievements {
-        let cache: online::AchievementCache = online::load_achievements(job.steam64);
-        // Counts SteamHunters just reported, so an update that added achievements is caught in
-        // this run rather than the next.
-        let hunted = hunters::load();
-        // Only games that have been played and have achievements; anything else is 0 unlocked.
-        let hints: Vec<online::AchievementHint> = job
-            .games
-            .iter()
-            .map(|g| online::AchievementHint { known_total: g.known_total.max(hunted.stats.get(&g.appid).map_or(0, |h| h.achievements)), ..*g })
-            .filter(|g| (g.last_played > 0 || g.playtime > 0) && g.known_total > 0)
-            .collect();
-        // A private profile is retried daily. Older versions could take a run of games with
-        // nothing unlocked for a private profile, so their verdict isn't trusted.
-        let skip = cache.private && cache.format >= online::ACHIEVEMENTS_FORMAT && now.saturating_sub(cache.checked) < 24 * 3600 && !job.force;
-        let mut due = if skip { Vec::new() } else { online::achievements_due(&cache, &hints, now, job.force) };
-        // Most recently played first: on a long first run, the games the user cares about now
-        // fill in first.
-        due.sort_by_key(|h| std::cmp::Reverse(h.last_played));
+        let due = achievements_to_fetch(job, now);
         if !due.is_empty() {
             if let Err(e) = online::refresh_achievements(job.steam64, &due, now, &mut |d, t| progress("achievement progress", d, t)) {
                 fail(format!("Achievements: {e:#}"));
@@ -1189,6 +1175,75 @@ fn profile_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(St
             progress("screenshots", 1, 1);
         }
     }
+}
+
+/// Achievement pages worth fetching now, most recently played first: on a long first run, the
+/// games the user cares about now fill in first.
+fn achievements_to_fetch(job: &OnlineJob, now: u64) -> Vec<online::AchievementHint> {
+    let cache: online::AchievementCache = online::load_achievements(job.steam64);
+    // Counts SteamHunters just reported, so an update that added achievements is caught in
+    // this run rather than the next.
+    let hunted = hunters::load();
+    // Only games that have been played and have achievements; anything else is 0 unlocked.
+    let hints: Vec<online::AchievementHint> = job
+        .games
+        .iter()
+        .map(|g| online::AchievementHint { known_total: g.known_total.max(hunted.stats.get(&g.appid).map_or(0, |h| h.achievements)), ..*g })
+        .filter(|g| (g.last_played > 0 || g.playtime > 0) && g.known_total > 0)
+        .collect();
+    // A private profile is retried daily. Older versions could take a run of games with
+    // nothing unlocked for a private profile, so their verdict isn't trusted.
+    let skip = cache.private && cache.format >= online::ACHIEVEMENTS_FORMAT && now.saturating_sub(cache.checked) < 24 * 3600 && !job.force;
+    let mut due = if skip { Vec::new() } else { online::achievements_due(&cache, &hints, now, job.force) };
+    due.sort_by_key(|h| std::cmp::Reverse(h.last_played));
+    due
+}
+
+/// What a refresh is about to fetch, worked out before it starts so the window can say when
+/// it will take a while.
+#[derive(Debug, Clone, Default, Serialize)]
+pub struct OnlinePlan {
+    pub requests: usize,
+    /// A rough estimate, assuming the sites answer promptly.
+    pub seconds: u64,
+    /// Games something will be fetched for.
+    pub games: usize,
+}
+
+pub fn plan_online(job: &OnlineJob) -> OnlinePlan {
+    let now = snapshot::now_secs();
+    let s = &job.settings;
+    let ids: Vec<u32> = job.games.iter().map(|g| g.appid).collect();
+    let batches = |n: usize| n.div_ceil(100);
+    let mut games = BTreeSet::new();
+    let (mut store, mut profile, mut proton) = ((0, 0), (0, 0), (0, 0));
+    if s.online_prices {
+        let mut cache: online::StoreCache = online::load(online::STORE_FILE);
+        cache.switch_to(&job.country);
+        let due = online::store_due(&cache, &ids, &job.country, now, online::WEEK, job.force);
+        games.extend(due.iter().copied());
+        store = (batches(due.len()), batches(due.len()) as u64);
+    }
+    if s.online_hunters {
+        let pairs: Vec<(u32, u32)> = job.games.iter().map(|g| (g.appid, g.change)).collect();
+        let due = if job.force { ids.clone() } else { hunters::stale(&hunters::load(), &pairs, now) };
+        games.extend(due.iter().copied());
+        profile.0 += batches(due.len());
+        profile.1 += batches(due.len()) as u64 * 3 / 2;
+    }
+    if s.online_achievements {
+        let due = achievements_to_fetch(job, now);
+        games.extend(due.iter().map(|h| h.appid));
+        profile.0 += due.len() + 1;
+        profile.1 += due.len() as u64 * online::ACHIEVEMENT_GAP_MS / 1000;
+    }
+    if s.online_protondb {
+        let due = online::proton_due(&online::load(online::PROTON_FILE), &ids, now, job.force);
+        games.extend(due.iter().copied());
+        proton = (due.len(), online::proton_seconds(due.len()));
+    }
+    // The three lanes run side by side; the slowest decides.
+    OnlinePlan { requests: store.0 + profile.0 + proton.0, seconds: store.1.max(profile.1).max(proton.1), games: games.len() }
 }
 
 fn proton_lane(job: &OnlineJob, now: u64, progress: Progress, fail: &(dyn Fn(String) + Sync), saved: Saved) {
